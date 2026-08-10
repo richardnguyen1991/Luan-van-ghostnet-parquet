@@ -1,0 +1,43 @@
+assumptions:
+  - id: OA-SPLIT-001
+    component: contiguous_group
+    reason: The paper does not define capture groups or sequence boundaries.
+    impact: Groups prevent windows crossing split boundaries but affect class balance.
+    default: source_file_id plus floor(source_row_id / 4096)
+    alternatives: [timestamp_gap_session, stable_flow_id_group, endpoint_time_window]
+    status: operational_assumption
+  - id: OA-SPLIT-002
+    component: validation_fraction
+    reason: The paper reports 70 and 80 percent training but does not define validation.
+    impact: Effective train fractions are 0.63 and 0.72.
+    default: 10 percent of outer-train groups
+    alternatives: [fixed_5_percent, nested_cross_validation]
+    status: operational_assumption
+  - id: OA-PRE-001
+    component: practical_missing_imputation
+    reason: GAIN is expensive for the first stable baseline.
+    impact: Practical baseline is not paper-exact for missing-value handling.
+    default: train-only median imputation
+    alternatives: [GAIN]
+    status: operational_assumption
+  - id: OA-PRE-002
+    component: isolation_forest
+    reason: The paper does not publish contamination or tree count.
+    impact: Changes the retained training distribution.
+    default: contamination=0.01, n_estimators=100, train-only removal
+    alternatives: [contamination_auto, ablation_disabled]
+    status: operational_assumption
+  - id: OA-GAIN-001
+    component: gain_hyperparameters
+    reason: The paper provides equations but not architecture or optimizer settings.
+    impact: Imputation values may differ from the authors' implementation.
+    default: epochs=20, batch_size=256, hint_rate=0.9, alpha=100, Adam=0.001
+    alternatives: [hyperparameter_sweep, median_ablation]
+    status: operational_assumption
+  - id: OA-DATA-001
+    component: SimillarHTTP
+    reason: The observed source stores this field as a string and the paper does not define its encoding.
+    impact: The field is excluded from classifier features pending a semantic encoding ablation.
+    default: drop_from_classifier
+    alternatives: [validated_numeric_parse, categorical_encoding_ablation]
+    status: operational_assumption
