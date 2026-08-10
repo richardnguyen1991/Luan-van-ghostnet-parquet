@@ -1,0 +1,20 @@
+project:
+  mode: paper_faithful
+
+preprocessing:
+  missing_strategy: gain
+
+feature_extraction:
+  sax_enabled: true
+  resnet50_enabled: false
+  resnet50_status: paper_inferred_pending_ablation
+
+feature_selection:
+  cfaco_enabled: true
+
+graph:
+  enabled: true
+  node_definition: hashed_network_entity
+  edge_definition: communication_within_time_window
+  status: pending_step_3_graph_manifest
+
