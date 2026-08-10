@@ -1,0 +1,14 @@
+requirement_id,requirement,implementation,test_or_evidence,status
+23,Recursive Parquet discovery and schema profile,src/data.py,tests/test_data.py,implemented_step_2
+24,Ordered label-column detection with ambiguity failure,src/data.py,tests/test_data.py,implemented_step_2
+25,Identify timestamp IDs IP ports protocol and leakage columns,src/data.py,tests/test_data.py,implemented_step_2
+26,Compare actual schema with paper claim,src/data.py,data_profile.json runtime artifact,implemented_step_2
+27,Outer train fractions 0.70 and 0.80 with internal validation,src/splits.py,tests/test_splits.py,implemented_step_2
+28,Prefer group integrity over stratification,src/splits.py,tests/test_splits.py,implemented_step_2
+29,Stable sample_id and empty split intersections,src/data.py;src/splits.py,tests/test_splits.py,implemented_step_2
+35,Duplicate empty numeric and infinity handling,src/preprocessing.py,tests/test_preprocessing.py,implemented_step_2
+36,GAIN fit on train and skipped when no missing,src/preprocessing.py,tests/test_preprocessing.py,implemented_step_2
+37,Isolation Forest train-only outlier removal,src/preprocessing.py,tests/test_preprocessing.py,implemented_step_2
+38,MinMax fit train-only and clip accounting,src/preprocessing.py,tests/test_preprocessing.py,implemented_step_2
+48,Do not fabricate graph without valid identity/time,configs/*.yaml,paper_alignment.md,pending_step_3
+
