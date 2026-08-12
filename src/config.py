@@ -57,8 +57,24 @@ def validate_config(config: dict[str, Any]) -> None:
     strategy = config["preprocessing"].get("missing_strategy")
     if strategy is not None and strategy not in {"median", "gain"}:
         raise ValueError("missing_strategy must be median or gain")
+    if "step3" in config:
+        step3 = config["step3"]
+        if int(step3["sequence_length"]) < 2:
+            raise ValueError("step3.sequence_length must be at least 2")
+        if int(step3["sequence_stride"]) <= 0:
+            raise ValueError("step3.sequence_stride must be positive")
+        if step3.get("target_rule") != "last_timestep":
+            raise ValueError("Only step3.target_rule=last_timestep is currently supported")
+        if step3.get("missing_endpoint_policy") != "drop_window":
+            raise ValueError("Only step3.missing_endpoint_policy=drop_window is currently supported")
+        if step3.get("graph_direction") != "directed":
+            raise ValueError("Only step3.graph_direction=directed is currently supported")
+        for field in ("source_endpoint_column", "destination_endpoint_column", "endpoint_hash_namespace"):
+            if not isinstance(step3.get(field), str) or not step3[field].strip():
+                raise ValueError(f"step3.{field} must be a non-empty string")
 
 
 def config_hash(config: dict[str, Any]) -> str:
     serialized = json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
