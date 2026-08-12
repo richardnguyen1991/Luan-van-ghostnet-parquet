@@ -10,5 +10,10 @@ requirement_id,requirement,implementation,test_or_evidence,status
 36,GAIN fit on train and skipped when no missing,src/preprocessing.py,tests/test_preprocessing.py,implemented_step_2
 37,Isolation Forest train-only outlier removal,src/preprocessing.py,tests/test_preprocessing.py,implemented_step_2
 38,MinMax fit train-only and clip accounting,src/preprocessing.py,tests/test_preprocessing.py,implemented_step_2
-48,Do not fabricate graph without valid identity/time,configs/*.yaml,paper_alignment.md,pending_step_3
+48,Do not fabricate graph without valid identity/time,configs/*.yaml,paper_alignment.md,implemented_step_3
+49,Contiguous Parquet slices for temporal validation,src/data.py,tests/test_graph_sequences.py,implemented_step_3
+50,Create windows only inside source-row-contiguous split groups,src/graph_sequences.py,tests/test_graph_sequences.py,implemented_step_3
+51,Build directed endpoint graph without persisting raw IPs,src/graph_sequences.py,tests/test_graph_sequences.py,implemented_step_3
+52,Verify zero sample/group intersections across tensor splits,src/graph_sequences.py,tests/test_graph_sequences.py,implemented_step_3
+53,Write compressed sequence and graph tensor artifacts,src/step3_smoke.py,tests/test_graph_sequences.py,implemented_step_3
 
