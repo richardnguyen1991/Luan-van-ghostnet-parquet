@@ -41,3 +41,18 @@ assumptions:
     default: drop_from_classifier
     alternatives: [validated_numeric_parse, categorical_encoding_ablation]
     status: operational_assumption
+  - id: OA-GRAPH-001
+    component: graph_construction
+    reason: The paper describes node-to-node communication graphs but publishes no node identity, edge rule, or adjacency algorithm.
+    impact: The graph structure directly affects the spatial features learned by the future GCN.
+    default: window-local namespaced SHA-256 endpoint nodes with one directed Source IP to Destination IP edge per flow timestep
+    alternatives: [stable_flow_id_graph, endpoint_time_aggregate_graph, externally_supplied_vehicle_topology]
+    status: operational_assumption
+  - id: OA-SEQ-001
+    component: temporal_window
+    reason: The paper states that LSTM processes temporal sequences but does not publish sequence length or stride.
+    impact: Window size and overlap change temporal context and effective sample count.
+    default: 16 consecutive source rows with stride 8; sequence-to-one target is the final timestep label
+    alternatives: [length_8_stride_4, length_32_stride_16, tuned_non_overlapping_windows]
+    status: operational_assumption
+
