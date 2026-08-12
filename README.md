@@ -45,6 +45,10 @@ python -m src.step2_smoke \
   --samples-per-file 2048
 ```
 
+The bundled private Kaggle notebook retrieves `KAGGLE_API_TOKEN` through
+Kaggle Secrets and passes it only to the dataset-download subprocess. The
+secret value is never printed or stored in project artifacts.
+
 Run tests:
 
 ```bash
