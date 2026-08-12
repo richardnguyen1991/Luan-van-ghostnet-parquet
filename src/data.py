@@ -217,6 +217,96 @@ def load_sampled_dataset(
     return combined, manifest
 
 
+def sample_contiguous_parquet_file(
+    path: Path,
+    samples: int,
+    seed: int,
+    minimum_run_rows: int,
+    maximum_row_groups: int = 4,
+) -> pd.DataFrame:
+    """Read deterministic contiguous slices without inventing temporal adjacency."""
+    if pq is None:
+        raise ImportError("pyarrow is required to read the Kaggle Parquet dataset")
+    if int(samples) <= 0 or int(minimum_run_rows) <= 0:
+        raise ValueError("samples and minimum_run_rows must be positive")
+    parquet_file = pq.ParquetFile(path)
+    desired_groups = min(
+        parquet_file.num_row_groups,
+        max(1, min(int(maximum_row_groups), int(samples) // int(minimum_run_rows))),
+    )
+    group_indices = _distributed_row_group_indices(parquet_file.num_row_groups, desired_groups)
+    base_quota, remainder = divmod(int(samples), max(1, len(group_indices)))
+    frames: list[pd.DataFrame] = []
+    for position, group_index in enumerate(group_indices):
+        quota = base_quota + int(position < remainder)
+        if quota <= 0:
+            continue
+        table = parquet_file.read_row_group(group_index)
+        take = min(len(table), quota)
+        if take <= 0:
+            continue
+        maximum_start = max(0, len(table) - take)
+        digest = hashlib.sha256(f"{seed}:{path.name}:{group_index}".encode("utf-8")).digest()
+        raw_start = int.from_bytes(digest[:8], "big") % (maximum_start + 1)
+        aligned_start = (raw_start // int(minimum_run_rows)) * int(minimum_run_rows)
+        start = min(aligned_start, maximum_start)
+        frames.append(canonicalize_frame(table.slice(start, take).to_pandas()))
+    if not frames:
+        return pd.DataFrame()
+    frame = pd.concat(frames, ignore_index=True)
+    required = ["__source_file_id", "__source_row_id"]
+    missing = [column for column in required if column not in frame]
+    if missing:
+        raise RuntimeError(f"Contiguous sample is missing provenance columns: {missing}")
+    return frame.sort_values(required, kind="stable").reset_index(drop=True)
+
+
+def load_contiguous_sequence_dataset(
+    paths: DatasetPaths,
+    samples_per_file: int,
+    seed: int,
+    minimum_run_rows: int,
+    maximum_row_groups: int = 4,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    frames: list[pd.DataFrame] = []
+    records: list[dict[str, Any]] = []
+    expected_columns: list[str] | None = None
+    for index, path in enumerate(paths.parquet_files):
+        frame = sample_contiguous_parquet_file(
+            path,
+            int(samples_per_file),
+            int(seed) + index,
+            int(minimum_run_rows),
+            int(maximum_row_groups),
+        )
+        columns = list(frame.columns)
+        if expected_columns is None:
+            expected_columns = columns
+        elif columns != expected_columns:
+            raise RuntimeError(f"Contiguous sample schema differs: {path}")
+        frame["sample_id"] = stable_sample_ids(frame)
+        frames.append(frame)
+        records.append({
+            "file": str(path.relative_to(paths.root)).replace("\\", "/"),
+            "sampled_rows": len(frame),
+            "sampling": "distributed_row_groups_then_deterministic_contiguous_slices",
+        })
+    combined = pd.concat(frames, ignore_index=True)
+    if combined["sample_id"].duplicated().any():
+        duplicates = int(combined["sample_id"].duplicated().sum())
+        raise RuntimeError(f"Stable sample_id collision/duplication detected: {duplicates}")
+    manifest = {
+        "mode": "contiguous_sequence_sampled",
+        "samples_per_file": int(samples_per_file),
+        "minimum_run_rows": int(minimum_run_rows),
+        "maximum_row_groups_per_file": int(maximum_row_groups),
+        "seed": int(seed),
+        "total_sampled_rows": len(combined),
+        "files": records,
+    }
+    return combined, manifest
+
+
 def build_data_profile(
     manifest_contract: dict[str, Any],
     sample: pd.DataFrame,
@@ -294,6 +384,39 @@ def audit_sampled_dataset(
         "config_hash": config_hash(config),
         "dataset_schema_hash": contract["schema"]["schema_hash"],
         "conversion_validation": contract["validation"],
+    })
+    return sample, profile, sample_manifest
+
+
+def audit_contiguous_sequence_dataset(
+    data_dir: str | Path,
+    output_dir: str | Path,
+    config: dict[str, Any],
+) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
+    data_config = config["data"]
+    step3 = config["step3"]
+    paths = discover_dataset(
+        data_dir,
+        data_config["dataset_dir_hint"],
+        data_config["expected_source_files"],
+    )
+    contract = validate_dataset_manifests(paths, data_config)
+    sample, sample_manifest = load_contiguous_sequence_dataset(
+        paths,
+        data_config["samples_per_file"],
+        config["project"]["seed"],
+        step3["sequence_length"],
+        step3["sampled_row_groups_per_file"],
+    )
+    profile = build_data_profile(contract, sample, paths)
+    output_root = Path(output_dir)
+    write_json(output_root / "data_profile.json", profile)
+    write_json(output_root / "sample_manifest.json", sample_manifest)
+    write_json(output_root / "dataset_contract.json", {
+        "config_hash": config_hash(config),
+        "dataset_schema_hash": contract["schema"]["schema_hash"],
+        "conversion_validation": contract["validation"],
+        "sampling_preserves_contiguous_source_rows": True,
     })
     return sample, profile, sample_manifest
 
