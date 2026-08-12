@@ -44,6 +44,16 @@ def validate_config(config: dict[str, Any]) -> None:
     group_rows = int(config["data"]["sequence_group_rows"])
     if group_rows <= 0:
         raise ValueError("sequence_group_rows must be positive")
+    for field in (
+        "label_candidates",
+        "timestamp_candidates",
+        "provenance_columns",
+        "identifier_columns",
+        "non_numeric_feature_columns",
+    ):
+        values = config["data"].get(field, [])
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            raise ValueError(f"data.{field} must be a list of column-name strings")
     strategy = config["preprocessing"].get("missing_strategy")
     if strategy is not None and strategy not in {"median", "gain"}:
         raise ValueError("missing_strategy must be median or gain")
