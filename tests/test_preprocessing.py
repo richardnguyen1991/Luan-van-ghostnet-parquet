@@ -20,6 +20,12 @@ def practical_config():
     return config
 
 
+def test_identifier_columns_are_column_name_strings():
+    config = practical_config()
+    assert config["data"]["identifier_columns"][0] == "Unnamed: 0"
+    assert all(isinstance(column, str) for column in config["data"]["identifier_columns"])
+
+
 def preprocessing_frame() -> pd.DataFrame:
     rows = []
     for split, count, offset in (("train", 20, 0), ("validation", 5, 100), ("test", 5, 200)):
@@ -84,4 +90,3 @@ def test_gain_imputes_missing_values_with_real_generator():
     transformed = imputer.fit_transform(values)
     assert not np.isnan(transformed).any()
     np.testing.assert_allclose(transformed[~np.isnan(values)], values[~np.isnan(values)], rtol=1e-6)
-
