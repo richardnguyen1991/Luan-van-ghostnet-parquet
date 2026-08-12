@@ -11,7 +11,7 @@ data:
   label_candidates: [Label, label, Class, class, target, Target]
   timestamp_candidates: [Timestamp, timestamp]
   provenance_columns: [__capture_day, __source_file_id, __source_row_id]
-  identifier_columns: [Unnamed: 0, Flow ID, Source IP, Destination IP, Timestamp]
+  identifier_columns: ["Unnamed: 0", Flow ID, Source IP, Destination IP, Timestamp]
   non_numeric_feature_columns: [SimillarHTTP]
   samples_per_file: 2048
   sequence_group_rows: 4096
