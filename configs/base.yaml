@@ -49,6 +49,18 @@ preprocessing:
     learning_rate: 0.001
     hidden_multiplier: 1.0
 
+step3:
+  sequence_length: 16
+  sequence_stride: 8
+  require_consecutive_source_rows: true
+  target_rule: last_timestep
+  source_endpoint_column: Source IP
+  destination_endpoint_column: Destination IP
+  endpoint_hash_namespace: gc-lstm-ghostnet-cicddos2019-v1
+  missing_endpoint_policy: drop_window
+  graph_direction: directed
+  sampled_row_groups_per_file: 4
+
 future_training_contract:
   epochs: 100
   batch_size: 512
@@ -59,3 +71,4 @@ future_training_contract:
   scheduler: cosine
   min_learning_rate: 0.000001
   mixed_precision_on_cuda: true
+
