@@ -4,7 +4,7 @@ This folder is the controlled reproduction project for the detection and
 classification phase of the GC-LSTM-GhostNet paper workflow. RL-ARL and the
 double-trapdoor extension are explicitly out of scope for v1.
 
-Step 2 currently provides:
+Steps 2 and 3 currently provide:
 
 - centralized YAML configuration for `paper_faithful` and `practical_baseline`;
 - structure-preserving Parquet discovery and manifest validation;
@@ -16,7 +16,13 @@ Step 2 currently provides:
 - train-only median or GAIN imputation;
 - train-only Isolation Forest filtering;
 - train-only MinMax scaling and preprocessing artifacts;
-- schema, split leakage, and preprocessing tests.
+- schema, split leakage, and preprocessing tests;
+- deterministic contiguous Parquet slices for sequence validation;
+- strict windows that never cross source-row gaps, groups, or splits;
+- sequence-to-one labels taken from the last flow in each window;
+- directed Source IP to Destination IP graph edges for every flow timestep;
+- window-local graph node indices backed by namespaced SHA-256 endpoint hashes;
+- compressed sequence and graph tensor artifacts with leakage reports.
 
 Default Kaggle dataset:
 
@@ -45,9 +51,31 @@ python -m src.step2_smoke \
   --samples-per-file 2048
 ```
 
-The bundled private Kaggle notebook retrieves `KAGGLE_API_TOKEN` through
-Kaggle Secrets and passes it only to the dataset-download subprocess. The
-secret value is never printed or stored in project artifacts.
+Complete Step 3 graph/sequence smoke test:
+
+```bash
+python -m src.step3_smoke \
+  --data-dir /kaggle/input \
+  --config configs/base.yaml \
+  --mode-config configs/practical_baseline.yaml \
+  --samples-per-file 2048 \
+  --sequence-length 16 \
+  --sequence-stride 8
+```
+
+Each split writes `sequence_tensors.npz`, `graph_tensors.npz`, and
+`sequence_graph_manifest.json`. The run also writes
+`sequence_leakage_report.json` and `step3_summary.json`. Raw IP addresses are
+never stored in these tensor artifacts.
+
+The paper does not publish its graph-construction rule, sequence length, or
+stride. Step 3 therefore records the configurable 16/8 endpoint-flow design as
+an operational assumption rather than presenting it as paper-exact.
+
+The bundled private Kaggle notebook first uses the attached dataset under
+`/kaggle/input`. Only when that mount is absent does it retrieve
+`KAGGLE_API_TOKEN` through Kaggle Secrets and pass it to the download
+subprocess. The secret value is never printed or stored in project artifacts.
 
 Run tests:
 
@@ -55,5 +83,9 @@ Run tests:
 pytest -q
 ```
 
-Graph construction, sequence tensors, CFACO, and model code intentionally begin
-in later approved steps. No graph adjacency is fabricated in Step 2.
+CFACO and model training intentionally begin in later steps. Step 3 creates a
+traceable graph from observed source/destination endpoints; it does not infer
+unobserved vehicle topology. Full mixed-group streaming tensor production is
+paired with the Step 4 training loop so every eligible train window is consumed
+without first materializing the full dataset in memory.
+
