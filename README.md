@@ -4,7 +4,7 @@ This folder is the controlled reproduction project for the detection and
 classification phase of the GC-LSTM-GhostNet paper workflow. RL-ARL and the
 double-trapdoor extension are explicitly out of scope for v1.
 
-Steps 2 and 3 currently provide:
+Steps 2 through 4 currently provide:
 
 - centralized YAML configuration for `paper_faithful` and `practical_baseline`;
 - structure-preserving Parquet discovery and manifest validation;
@@ -23,6 +23,12 @@ Steps 2 and 3 currently provide:
 - directed Source IP to Destination IP graph edges for every flow timestep;
 - window-local graph node indices backed by namespaced SHA-256 endpoint hashes;
 - compressed sequence and graph tensor artifacts with leakage reports.
+- a directed three-layer GCN, LSTM, temporal attention, Ghost module, and classifier;
+- class-balanced AdamW training with cosine scheduling and gradient clipping;
+- immutable per-epoch, latest, and best checkpoints with complete restart state;
+- accuracy, precision, recall, macro/weighted F1, AUC-ROC, confusion matrix,
+  runtime, memory, latency, throughput, and learning-curve artifacts;
+- optional secure S3 uploads using environment credentials (never serialized).
 
 Default Kaggle dataset:
 
@@ -72,6 +78,22 @@ The paper does not publish its graph-construction rule, sequence length, or
 stride. Step 3 therefore records the configurable 16/8 endpoint-flow design as
 an operational assumption rather than presenting it as paper-exact.
 
+Step 4 sampled training smoke test (two epochs):
+
+```bash
+python train.py \
+  --data-dir /kaggle/input/datasets/dungnguyen28101991/cicddos2019-parquet \
+  --output-dir /kaggle/working/gc_lstm_ghostnet_step4 \
+  --samples-per-file 2048 \
+  --epochs 2 \
+  --batch-size 64
+```
+
+The CLI default is 100 epochs. Add `--upload-checkpoints-to-s3 --s3-bucket
+BUCKET --s3-prefix PREFIX --aws-region REGION` to upload checkpoints and final
+artifacts. AWS credentials must be supplied through environment variables or
+Kaggle Secrets; they are not accepted as command-line arguments.
+
 The bundled private Kaggle notebook first uses the attached dataset under
 `/kaggle/input`. Only when that mount is absent does it retrieve
 `KAGGLE_API_TOKEN` through Kaggle Secrets and pass it to the download
@@ -83,9 +105,12 @@ Run tests:
 pytest -q
 ```
 
-CFACO and model training intentionally begin in later steps. Step 3 creates a
+CFACO remains a later step. Step 3 creates a
 traceable graph from observed source/destination endpoints; it does not infer
 unobserved vehicle topology. Full mixed-group streaming tensor production is
 paired with the Step 4 training loop so every eligible train window is consumed
-without first materializing the full dataset in memory.
+without first materializing the full dataset in memory. The current Step 4
+implementation is explicitly labeled `bounded_contiguous_sample`; it refuses
+`--full-dataset`/`--stream-files` so a sampled result cannot be mislabeled as a
+full-dataset experiment.
 
