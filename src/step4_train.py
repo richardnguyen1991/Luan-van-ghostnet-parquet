@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--learning-rate", type=float)
+    parser.add_argument("--device", choices=["cpu"], default="cpu")
     parser.add_argument("--samples-per-file", type=int, default=2048)
     parser.add_argument("--sequence-group-rows", type=int)
     parser.add_argument("--sequence-length", type=int)
@@ -54,6 +55,8 @@ def main() -> None:
             "Do not claim a full-dataset result; full mixed-group streaming remains a separate scale run."
         )
     config = load_config(args.config, args.mode_config)
+    if args.device != "cpu":
+        raise ValueError("Only CPU execution is supported by this project")
     config["data"]["samples_per_file"] = int(args.samples_per_file)
     if args.sequence_group_rows is not None:
         config["data"]["sequence_group_rows"] = int(args.sequence_group_rows)
@@ -143,4 +146,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
