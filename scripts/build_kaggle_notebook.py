@@ -100,7 +100,9 @@ print(f"Step 6 CPU artifact/report project ready; using dataset at {{DATA_DIR}}"
 ]
 subprocess.run(command, cwd=PROJECT_DIR, check=True)
 '''
-    verify_source = '''summary_path = OUTPUT_DIR / "step6_summary.json"
+    verify_source = '''import json
+
+summary_path = OUTPUT_DIR / "step6_summary.json"
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
 assert summary["status"] == "passed", summary
 assert summary["device"] == "cpu", summary
