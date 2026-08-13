@@ -84,9 +84,14 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError("step4.outer_train_fraction must be 0.70 or 0.80")
         if step4.get("checkpoint_metric") != "macro_f1":
             raise ValueError("Only step4.checkpoint_metric=macro_f1 is supported")
+    if "future_training_contract" in config:
+        contract = config["future_training_contract"]
+        if contract.get("device") != "cpu":
+            raise ValueError("This project is CPU-only; future_training_contract.device must be cpu")
+        if bool(contract.get("mixed_precision_on_cuda")):
+            raise ValueError("CUDA mixed precision must be disabled for the CPU-only project")
 
 
 def config_hash(config: dict[str, Any]) -> str:
     serialized = json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
