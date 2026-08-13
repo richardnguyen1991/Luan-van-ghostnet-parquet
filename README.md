@@ -4,7 +4,7 @@ This folder is the controlled reproduction project for the detection and
 classification phase of the GC-LSTM-GhostNet paper workflow. RL-ARL and the
 double-trapdoor extension are explicitly out of scope for v1.
 
-Steps 2 through 4 currently provide:
+Steps 2 through 7 currently provide:
 
 - centralized YAML configuration for `paper_faithful` and `practical_baseline`;
 - structure-preserving Parquet discovery and manifest validation;
@@ -144,6 +144,49 @@ The bundled private Kaggle notebook uses only the dataset attached under
 the setup cell stops with an explicit **Add Input** instruction. GitHub Actions
 secrets are intentionally unavailable inside Kaggle notebooks.
 
+## Step 7: sampled end-to-end automation (CPU only)
+
+`kaggle_notebook.ipynb` now runs the full bounded acceptance path: dataset and
+schema audit, leakage-safe preprocessing, graph/sequence construction, two CPU
+training epochs, explainability, inference benchmark, and report regeneration.
+Success writes `step7_acceptance.json` under
+`/kaggle/working/Luan-Van-GC-LSTM-GhostNet-CICDDoS2019-v1/outputs/step7_sampled_end_to_end`.
+
+Both `kernel-metadata.json` (used by the Kaggle CLI) and `kaggle.json` (the
+repository mirror containing notebook id `130206197`) pin:
+
+- notebook `dungnguyen28101991/luan-van-ghostnet-parquet`;
+- dataset `dungnguyen28101991/cicddos2019-parquet`;
+- `enable_gpu: false` (no CUDA, TPU, or mixed precision).
+
+The GitHub workflow `.github/workflows/run-kaggle.yml` is manual-only. Open
+**Actions -> Run Kaggle CPU notebook -> Run workflow** and keep `max_sessions=1`
+for Step 7. It has a repository concurrency lock, a bounded 360-minute GitHub
+job, a configurable polling timeout, and at most three explicitly selected
+attempts. To stop it, use GitHub Actions **Cancel workflow**; no infinite loop or
+scheduled trigger exists.
+
+Required repository secrets:
+
+```text
+KAGGLE_API_TOKEN
+KAGGLE_KERNEL=dungnguyen28101991/luan-van-ghostnet-parquet
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+AWS_DEFAULT_REGION
+S3_BUCKET
+S3_PREFIX
+```
+
+The default Step 7 run does not use AWS. When `upload_outputs_to_s3=true`, the
+workflow downloads completed Kaggle outputs and uploads them from the GitHub
+runner to `s3://<S3_BUCKET>/<S3_PREFIX>/step7/<github-run-id>/`. Thus AWS secrets
+remain in GitHub and are never injected into Kaggle or embedded in notebook
+source. The same outputs are retained as a GitHub Actions artifact for 14 days.
+
+This is still a bounded sampled acceptance run, not the 100-epoch full-dataset
+experiment. Step 8 must not be started until it is explicitly approved.
+
 Run tests:
 
 ```bash
@@ -158,3 +201,4 @@ without first materializing the full dataset in memory. The current Step 4
 implementation is explicitly labeled `bounded_contiguous_sample`; it refuses
 `--full-dataset`/`--stream-files` so a sampled result cannot be mislabeled as a
 full-dataset experiment.
+

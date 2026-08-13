@@ -55,7 +55,7 @@ import sys
 import zipfile
 
 PROJECT_DIR = Path("/kaggle/working/Luan-Van-GC-LSTM-GhostNet-CICDDoS2019-v1")
-OUTPUT_DIR = PROJECT_DIR / "outputs" / "step6_artifact_smoke"
+OUTPUT_DIR = PROJECT_DIR / "outputs" / "step7_sampled_end_to_end"
 MOUNTED_DATA_CANDIDATES = [
     Path("/kaggle/input/cicddos2019-parquet"),
     Path("/kaggle/input/datasets/dungnguyen28101991/cicddos2019-parquet"),
@@ -86,7 +86,7 @@ else:
         "dungnguyen28101991/cicddos2019-parquet, then Save Version / Run All. "
         f"Current /kaggle/input entries: {{mounted_entries}}"
     )
-print(f"Step 6 CPU artifact/report project ready; using dataset at {{DATA_DIR}}")
+print(f"Step 7 sampled end-to-end CPU project ready; using dataset at {{DATA_DIR}}")
 '''
     run_source = '''command = [
     sys.executable, "-m", "src.step6_artifact_smoke",
@@ -111,23 +111,35 @@ assert summary["expected_not_yet_run"] == ["ablation_comparison", "cfaco_converg
 assert len(summary["report"]["produced"]) == 11, summary
 assert (OUTPUT_DIR / "report" / "report_status.json").exists()
 assert (OUTPUT_DIR / "artifacts" / "benchmark.json").exists()
-summary
+step7_acceptance = {{
+    "status": "passed",
+    "step": 7,
+    "mode": "sampled_end_to_end",
+    "device": "cpu",
+    "source_summary": str(summary_path),
+    "produced_report_groups": len(summary["report"]["produced"]),
+}}
+(OUTPUT_DIR / "step7_acceptance.json").write_text(
+    json.dumps(step7_acceptance, indent=2, ensure_ascii=False) + "\\n",
+    encoding="utf-8",
+)
+step7_acceptance
 '''
     return {
         "cells": [
             {
                 "cell_type": "markdown",
-                "id": "step6-intro",
+                "id": "step7-intro",
                 "metadata": {},
                 "source": [
-                    "# GC-LSTM-GhostNet - Step 6 CPU artifact, explainability, and benchmark\n",
+                    "# GC-LSTM-GhostNet - Step 7 sampled end-to-end (CPU only)\n",
                     "\n",
-                    "Train a bounded smoke model, create real attention/Integrated-Gradients artifacts, benchmark CPU inference, then regenerate the report from artifacts only.\n",
+                    "Validate the attached Parquet dataset, train a bounded two-epoch sample, create real explainability and benchmark artifacts, and verify the complete report contract.\n",
                 ],
             },
-            code_cell(setup_source, "materialize-step6-project"),
-            code_cell(run_source, "run-step6-artifact-smoke"),
-            code_cell(verify_source, "verify-step6-summary"),
+            code_cell(setup_source, "materialize-step7-project"),
+            code_cell(run_source, "run-step7-sampled-end-to-end"),
+            code_cell(verify_source, "verify-step7-acceptance"),
         ],
         "metadata": {
             "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
@@ -148,3 +160,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
