@@ -19,6 +19,8 @@ def test_model_forward_and_backward() -> None:
     assert logits.shape == (2, 3)
     assert attention.shape == (2, 4)
     assert torch.allclose(attention.sum(dim=1), torch.ones(2), atol=1e-5)
+    assert len(model.last_spatial_attention) == 2
+    assert all(torch.allclose(weights.sum(), torch.tensor(1.0), atol=1e-5)
+               for weights in model.last_spatial_attention)
     torch.nn.functional.cross_entropy(logits, batch.target_y).backward()
     assert any(parameter.grad is not None for parameter in model.parameters())
-
