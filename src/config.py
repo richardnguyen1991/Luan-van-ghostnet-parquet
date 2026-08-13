@@ -72,6 +72,18 @@ def validate_config(config: dict[str, Any]) -> None:
         for field in ("source_endpoint_column", "destination_endpoint_column", "endpoint_hash_namespace"):
             if not isinstance(step3.get(field), str) or not step3[field].strip():
                 raise ValueError(f"step3.{field} must be a non-empty string")
+    if "step4" in config:
+        step4 = config["step4"]
+        for field in ("flow_embedding_dim", "graph_hidden_dim", "graph_layers", "lstm_hidden_dim",
+                      "lstm_layers", "ghost_primary_channels", "ghost_ratio"):
+            if int(step4[field]) <= 0:
+                raise ValueError(f"step4.{field} must be positive")
+        if not 0.0 <= float(step4["dropout"]) < 1.0:
+            raise ValueError("step4.dropout must be in [0,1)")
+        if float(step4["outer_train_fraction"]) not in {0.7, 0.8}:
+            raise ValueError("step4.outer_train_fraction must be 0.70 or 0.80")
+        if step4.get("checkpoint_metric") != "macro_f1":
+            raise ValueError("Only step4.checkpoint_metric=macro_f1 is supported")
 
 
 def config_hash(config: dict[str, Any]) -> str:
