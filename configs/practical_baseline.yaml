@@ -12,6 +12,10 @@ feature_selection:
   cfaco_enabled: false
 
 graph:
-  enabled: false
-  status: pending_step_3_schema_group_validation
+  enabled: true
+  status: directed_endpoint_graph_validated_in_step_3
+
+training:
+  enabled: true
+  status: step_4_sampled_training
 
