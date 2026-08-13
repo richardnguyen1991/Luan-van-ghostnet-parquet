@@ -12,4 +12,4 @@
 | ResNet-50 | Pretrained high-level feature extraction | Disabled until a meaningful tabular representation and ablation are approved | not_reproduced |
 | Class labels | Paper lists VANET attack categories | Preserve the 19 observed CIC-DDoS2019 labels; never rename them to paper labels | operational_assumption |
 | RL-ARL and trapdoor | Detection mitigation and security extension | Excluded from v1 detection/classification pipeline | not_reproduced |
-
+| Training device | The paper does not provide a reproducible device/runtime contract | CPU-only execution per explicit user requirement; CUDA and mixed precision are disabled | operational_assumption |
