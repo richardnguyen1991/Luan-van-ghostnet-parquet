@@ -166,6 +166,7 @@ class S3ArtifactUploader:
         self.max_retries = int(max_retries)
         self.required = bool(required)
         self.client = None
+        self.transfer_seconds = 0.0
         if self.enabled:
             if not bucket:
                 raise ValueError("--s3-bucket is required when S3 upload is enabled")
@@ -176,6 +177,7 @@ class S3ArtifactUploader:
     def upload(self, local_path: str | Path, relative_key: str) -> bool:
         if not self.enabled:
             return False
+        transfer_started = time.perf_counter()
         path = Path(local_path)
         key = "/".join(part for part in (self.prefix, relative_key.replace("\\", "/")) if part)
         last_error: Exception | None = None
@@ -203,6 +205,7 @@ class S3ArtifactUploader:
                 if final.get("Metadata", {}).get("sha256") != checksum:
                     raise RuntimeError("final S3 object checksum metadata mismatch")
                 self.client.delete_object(Bucket=self.bucket, Key=temporary_key)
+                self.transfer_seconds += time.perf_counter() - transfer_started
                 return True
             except Exception as exc:  # boto3 exposes several optional exception packages
                 last_error = exc
@@ -214,6 +217,7 @@ class S3ArtifactUploader:
                 self.client.delete_object(Bucket=self.bucket, Key=temporary_key)
         except Exception:
             pass
+        self.transfer_seconds += time.perf_counter() - transfer_started
         if self.required:
             raise RuntimeError(message) from last_error
         warnings.warn(message)
@@ -526,7 +530,7 @@ def train_model(
                 "contract_hashes": contract_hashes,
             }
 
-    training_seconds = time.perf_counter() - training_started
+    training_seconds = time.perf_counter() - training_started - uploader.transfer_seconds
     final_path = output / f"final_model_epoch_{int(epochs):03d}.pt"
     shutil.copy2(output / "last_checkpoint.pt", final_path)
     final_checkpoint = torch.load(final_path, map_location=device, weights_only=False)
