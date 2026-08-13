@@ -55,4 +55,10 @@ assumptions:
     default: 16 consecutive source rows with stride 8; sequence-to-one target is the final timestep label
     alternatives: [length_8_stride_4, length_32_stride_16, tuned_non_overlapping_windows]
     status: operational_assumption
-
+  - id: OA-DEVICE-001
+    component: training_device
+    reason: The user explicitly requires all stages to run on CPU, overriding the original GPU-default operational proposal.
+    impact: Training and resume verification are slower, while device behavior is uniform across audit, smoke, and training.
+    default: cpu_only
+    alternatives: [cuda_after_explicit_user_approval]
+    status: operational_assumption
