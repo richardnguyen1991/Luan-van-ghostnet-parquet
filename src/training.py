@@ -321,9 +321,10 @@ def train_model(
     output.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(int(seed))
     np.random.seed(int(seed))
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(int(seed))
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    requested_device = str(run_arguments.get("device", config["future_training_contract"]["device"]))
+    if requested_device != "cpu":
+        raise ValueError("Only CPU execution is supported by this project")
+    device = torch.device("cpu")
     label_mapping = preprocessing_metadata["label_mapping"]
     class_names = [label for label, _ in sorted(label_mapping.items(), key=lambda item: item[1])]
     class_count = len(class_names)
@@ -352,8 +353,6 @@ def train_model(
         T_max=max(1, int(epochs)),
         eta_min=float(contract["min_learning_rate"]),
     )
-    amp_enabled = bool(contract["mixed_precision_on_cuda"]) and device.type == "cuda"
-    scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
     history: list[dict[str, Any]] = []
     best_f1 = -math.inf
     uploader = uploader or S3ArtifactUploader(False, None, "", None, 0, False)
@@ -368,14 +367,11 @@ def train_model(
         for batch in loaders["train"]:
             batch = batch.to(device)
             optimizer.zero_grad(set_to_none=True)
-            with torch.autocast(device_type=device.type, enabled=amp_enabled):
-                logits, _ = model(batch)
-                loss = criterion(logits, batch.target_y)
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
+            logits, _ = model(batch)
+            loss = criterion(logits, batch.target_y)
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), float(contract["gradient_clip_norm"]))
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.step()
             online_loss += float(loss.detach().cpu()) * len(batch.target_y)
             online_correct += int((logits.argmax(dim=1) == batch.target_y).sum().detach().cpu())
             online_count += len(batch.target_y)
@@ -447,4 +443,3 @@ def train_model(
         "peak_memory_mb": peak_memory_mb,
         "model_parameters": model_parameter_count(model),
     }
-
