@@ -86,8 +86,13 @@ python train.py \
   --output-dir /kaggle/working/gc_lstm_ghostnet_step4 \
   --samples-per-file 2048 \
   --epochs 2 \
-  --batch-size 64
+  --batch-size 64 \
+  --device cpu
 ```
+
+This project is CPU-only by design. The CLI accepts only `--device cpu`, the
+training loop never selects CUDA or mixed precision, and the bundled Kaggle
+notebook is saved with GPU disabled.
 
 The CLI default is 100 epochs. Add `--upload-checkpoints-to-s3 --s3-bucket
 BUCKET --s3-prefix PREFIX --aws-region REGION` to upload checkpoints and final
@@ -113,4 +118,3 @@ without first materializing the full dataset in memory. The current Step 4
 implementation is explicitly labeled `bounded_contiguous_sample`; it refuses
 `--full-dataset`/`--stream-files` so a sampled result cannot be mislabeled as a
 full-dataset experiment.
-
