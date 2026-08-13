@@ -119,6 +119,7 @@ print(f"Step 4 project ready; using dataset at {{DATA_DIR}}")
     "--sequence-stride", "8",
     "--epochs", "2",
     "--batch-size", "64",
+    "--device", "cpu",
     "--run-name", "kaggle-step4-smoke",
 ]
 subprocess.run(command, cwd=PROJECT_DIR, check=True)
