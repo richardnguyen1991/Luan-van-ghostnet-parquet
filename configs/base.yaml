@@ -61,6 +61,25 @@ step3:
   graph_direction: directed
   sampled_row_groups_per_file: 4
 
+step4:
+  outer_train_fraction: 0.80
+  flow_embedding_dim: 64
+  graph_hidden_dim: 64
+  graph_layers: 3
+  lstm_hidden_dim: 96
+  lstm_layers: 1
+  ghost_primary_channels: 64
+  ghost_ratio: 2
+  dropout: 0.20
+  bidirectional_lstm: false
+  class_weighting: balanced
+  checkpoint_metric: macro_f1
+  sampled_smoke_epochs: 2
+  sampled_smoke_batch_size: 64
+  stream_shuffle_buffer_sequences: 8192
+  stream_eval_samples_per_file: 512
+  train_eval_samples_per_class: 256
+
 future_training_contract:
   epochs: 100
   batch_size: 512
