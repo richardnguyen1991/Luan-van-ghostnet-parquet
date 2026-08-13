@@ -16,4 +16,7 @@ requirement_id,requirement,implementation,test_or_evidence,status
 51,Build directed endpoint graph without persisting raw IPs,src/graph_sequences.py,tests/test_graph_sequences.py,implemented_step_3
 52,Verify zero sample/group intersections across tensor splits,src/graph_sequences.py,tests/test_graph_sequences.py,implemented_step_3
 53,Write compressed sequence and graph tensor artifacts,src/step3_smoke.py,tests/test_graph_sequences.py,implemented_step_3
-
+68,Immutable epoch latest and best checkpoints,src/training.py,step5_resume_summary.json,implemented_step_5
+69,Atomic S3 upload with size and SHA-256 verification,src/training.py,S3 object metadata,implemented_step_5
+70,Resume next epoch with hash and RNG validation,src/training.py;src/step5_resume_smoke.py,tests/test_resume_contract.py;step5_resume_summary.json,implemented_step_5
+118,Interrupt after epoch 2 and resume epoch 3 with state comparison,src/step5_resume_smoke.py,step5_resume_summary.json,implemented_step_5
