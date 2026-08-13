@@ -21,7 +21,7 @@ from .training import S3ArtifactUploader, train_model
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train GC-LSTM-GhostNet on CIC-DDoS2019")
     parser.add_argument("--data-dir", default="/kaggle/input")
-    parser.add_argument("--output-dir", default="/kaggle/working/gc_lstm_ghostnet_step4")
+    parser.add_argument("--output-dir", default="/kaggle/working/gc_lstm_ghostnet_step5")
     parser.add_argument("--config", default="configs/base.yaml")
     parser.add_argument("--mode-config", default="configs/practical_baseline.yaml")
     parser.add_argument("--epochs", type=int, default=100)
@@ -43,7 +43,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--aws-region")
     parser.add_argument("--s3-max-retries", type=int, default=3)
     parser.add_argument("--s3-upload-required", action="store_true")
-    parser.add_argument("--run-name", default="step4")
+    parser.add_argument("--run-name", default="step5")
+    parser.add_argument("--session-id")
+    parser.add_argument("--resume", nargs="?", const="auto")
+    parser.add_argument("--stop-after-epoch", type=int)
     return parser.parse_args()
 
 
@@ -51,7 +54,7 @@ def main() -> None:
     args = parse_args()
     if args.full_dataset or args.stream_files:
         raise ValueError(
-            "Step 4 currently supports bounded, contiguous sampled materialization. "
+            "Step 5 currently supports bounded, contiguous sampled materialization. "
             "Do not claim a full-dataset result; full mixed-group streaming remains a separate scale run."
         )
     config = load_config(args.config, args.mode_config)
@@ -120,6 +123,16 @@ def main() -> None:
         args.s3_upload_required,
     )
     run_arguments = vars(args).copy()
+    run_arguments["manifest_references"] = {
+        "sample_manifest": str(data_output / "audit" / "sample_manifest.json"),
+        "preprocessing": str(data_output / "preprocessing.json"),
+        "sequence_leakage": str(data_output / "sequence_leakage_report.json"),
+    }
+    resume_from = args.resume
+    if resume_from == "auto":
+        resume_from = str(model_output / "last_checkpoint.pt")
+    if resume_from is not None and not Path(resume_from).exists():
+        raise FileNotFoundError(f"Resume checkpoint not found: {resume_from}")
     summary = train_model(
         bundles=bundles,
         preprocessing_metadata=processed.metadata,
@@ -131,6 +144,8 @@ def main() -> None:
         seed=seed,
         run_arguments=run_arguments,
         uploader=uploader,
+        resume_from=resume_from,
+        stop_after_epoch=args.stop_after_epoch,
     )
     summary.update({
         "execution_scope": "bounded_contiguous_sample",
@@ -140,7 +155,7 @@ def main() -> None:
         "sample_manifest": sample_manifest,
         "sequence_leakage_status": leakage["status"],
     })
-    write_json(output / "step4_summary.json", summary)
+    write_json(output / "step5_summary.json", summary)
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 
