@@ -13,3 +13,5 @@
 | Class labels | Paper lists VANET attack categories | Preserve the 19 observed CIC-DDoS2019 labels; never rename them to paper labels | operational_assumption |
 | RL-ARL and trapdoor | Detection mitigation and security extension | Excluded from v1 detection/classification pipeline | not_reproduced |
 | Training device | The paper does not provide a reproducible device/runtime contract | CPU-only execution per explicit user requirement; CUDA and mixed precision are disabled | operational_assumption |
+| GCN layer aggregation and attention | Three graph convolution layers plus spatial/temporal attention are described, but exact equations are incomplete | Concatenate H1/H2/H3, learn softmax node weights per window, then apply temporal attention after LSTM | paper_inferred |
+| Explainability | Attention is intrinsic to the proposed detector but no reporting protocol is published | Persist hashed-node spatial attention, temporal attention, and Integrated Gradients on a manifested test subset | operational_assumption |
