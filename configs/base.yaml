@@ -81,6 +81,7 @@ step4:
   train_eval_samples_per_class: 256
 
 future_training_contract:
+  device: cpu
   epochs: 100
   batch_size: 512
   optimizer: AdamW
@@ -89,5 +90,4 @@ future_training_contract:
   gradient_clip_norm: 1.0
   scheduler: cosine
   min_learning_rate: 0.000001
-  mixed_precision_on_cuda: true
-
+  mixed_precision_on_cuda: false
