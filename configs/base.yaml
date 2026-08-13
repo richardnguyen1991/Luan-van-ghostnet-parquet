@@ -72,7 +72,7 @@ step4:
   ghost_ratio: 2
   dropout: 0.20
   bidirectional_lstm: false
-  class_weighting: balanced
+  class_weighting: none
   checkpoint_metric: macro_f1
   sampled_smoke_epochs: 2
   sampled_smoke_batch_size: 64
@@ -91,3 +91,6 @@ future_training_contract:
   scheduler: cosine
   min_learning_rate: 0.000001
   mixed_precision_on_cuda: false
+  deterministic_algorithms: true
+  checkpoint_after_scheduler_step: true
+  test_only_after_target_epoch: true
