@@ -20,3 +20,8 @@ requirement_id,requirement,implementation,test_or_evidence,status
 69,Atomic S3 upload with size and SHA-256 verification,src/training.py,S3 object metadata,implemented_step_5
 70,Resume next epoch with hash and RNG validation,src/training.py;src/step5_resume_smoke.py,tests/test_resume_contract.py;step5_resume_summary.json,implemented_step_5
 118,Interrupt after epoch 2 and resume epoch 3 with state comparison,src/step5_resume_smoke.py,step5_resume_summary.json,implemented_step_5
+51,Learn spatial attention and expose temporal attention,src/model.py,tests/test_model.py;spatial_attention.csv;temporal_attention.csv,implemented_step_6
+81,CPU warmup and repeated latency benchmark,src/benchmark.py,benchmark.json;benchmark_raw.csv,implemented_step_6
+93,Integrated Gradients feature importance,src/explainability.py,feature_importance.csv,implemented_step_6
+97,Centralize headless plotting in viz.py,src/viz.py,report_status.json,implemented_step_6
+98,Regenerate report from artifacts without training,src/make_report.py,report_status.json,implemented_step_6
