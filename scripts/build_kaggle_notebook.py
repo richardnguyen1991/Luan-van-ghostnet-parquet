@@ -77,6 +77,10 @@ subprocess.run(
 )
 
 mounted_data_dir = next((path for path in MOUNTED_DATA_CANDIDATES if path.exists()), None)
+if mounted_data_dir is None and next(Path("/kaggle/input").rglob("dataset_summary.json"), None):
+    # Kaggle may choose a normalized mount slug that differs from the API slug.
+    # The data loader recursively selects the validated manifests below this root.
+    mounted_data_dir = Path("/kaggle/input")
 if mounted_data_dir is not None:
     DATA_DIR = mounted_data_dir
 else:
