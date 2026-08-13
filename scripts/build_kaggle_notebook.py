@@ -111,14 +111,14 @@ assert summary["expected_not_yet_run"] == ["ablation_comparison", "cfaco_converg
 assert len(summary["report"]["produced"]) == 11, summary
 assert (OUTPUT_DIR / "report" / "report_status.json").exists()
 assert (OUTPUT_DIR / "artifacts" / "benchmark.json").exists()
-step7_acceptance = {{
+step7_acceptance = {
     "status": "passed",
     "step": 7,
     "mode": "sampled_end_to_end",
     "device": "cpu",
     "source_summary": str(summary_path),
     "produced_report_groups": len(summary["report"]["produced"]),
-}}
+}
 (OUTPUT_DIR / "step7_acceptance.json").write_text(
     json.dumps(step7_acceptance, indent=2, ensure_ascii=False) + "\\n",
     encoding="utf-8",
@@ -151,8 +151,12 @@ step7_acceptance
 
 
 def main() -> None:
+    notebook = build_notebook()
+    for cell in notebook["cells"]:
+        if cell["cell_type"] == "code":
+            compile("".join(cell["source"]), f"<notebook:{cell['id']}>", "exec")
     NOTEBOOK_PATH.write_text(
-        json.dumps(build_notebook(), indent=1, ensure_ascii=False) + "\n",
+        json.dumps(notebook, indent=1, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     print(NOTEBOOK_PATH)
@@ -160,4 +164,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
