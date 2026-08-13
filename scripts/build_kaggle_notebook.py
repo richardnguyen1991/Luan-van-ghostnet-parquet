@@ -59,7 +59,10 @@ from kaggle_secrets import UserSecretsClient
 
 PROJECT_DIR = Path("/kaggle/working/Luan-Van-GC-LSTM-GhostNet-CICDDoS2019-v1")
 OUTPUT_DIR = PROJECT_DIR / "outputs" / "step4_smoke"
-MOUNTED_DATA_DIR = Path("/kaggle/input/datasets/dungnguyen28101991/cicddos2019-parquet")
+MOUNTED_DATA_CANDIDATES = [
+    Path("/kaggle/input/cicddos2019-parquet"),
+    Path("/kaggle/input/datasets/dungnguyen28101991/cicddos2019-parquet"),
+]
 DOWNLOADED_DATA_DIR = Path("/kaggle/working/cicddos2019-parquet-input")
 PROJECT_ARCHIVE_B64 = "{archive}"
 
@@ -73,8 +76,9 @@ subprocess.run(
     check=True,
 )
 
-if MOUNTED_DATA_DIR.exists():
-    DATA_DIR = MOUNTED_DATA_DIR
+mounted_data_dir = next((path for path in MOUNTED_DATA_CANDIDATES if path.exists()), None)
+if mounted_data_dir is not None:
+    DATA_DIR = mounted_data_dir
 else:
     DATA_DIR = DOWNLOADED_DATA_DIR
     if DATA_DIR.exists():
@@ -133,7 +137,7 @@ summary
                 "source": [
                     "# GC-LSTM-GhostNet - Step 4 sampled training smoke test\n",
                     "\n",
-                    "Train GCN â†’ LSTM â†’ temporal attention â†’ GhostNet with leakage-safe contiguous windows.\n",
+                    "Train GCN → LSTM → temporal attention → GhostNet with leakage-safe contiguous windows.\n",
                 ],
             },
             code_cell(setup_source, "materialize-step4-project"),
@@ -159,4 +163,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
