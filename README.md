@@ -139,10 +139,10 @@ produces 11 real visualization groups. CFACO convergence and ablation comparison
 are explicitly recorded as skipped until those experiments have real artifacts;
 the report generator never fabricates placeholder measurements.
 
-The bundled private Kaggle notebook first uses the attached dataset under
-`/kaggle/input`. Only when that mount is absent does it retrieve
-`KAGGLE_API_TOKEN` through Kaggle Secrets and pass it to the download
-subprocess. The secret value is never printed or stored in project artifacts.
+The bundled private Kaggle notebook uses only the dataset attached under
+`/kaggle/input`. It never requests `KAGGLE_API_TOKEN`. If the input is absent,
+the setup cell stops with an explicit **Add Input** instruction. GitHub Actions
+secrets are intentionally unavailable inside Kaggle notebooks.
 
 Run tests:
 
