@@ -14,6 +14,7 @@ NOTEBOOK_PATH = PROJECT_ROOT / "kaggle_notebook.ipynb"
 def project_archive() -> str:
     include = [
         "README.md",
+        "train.py",
         "assumptions.yaml",
         "paper_alignment.md",
         "requirements.txt",
@@ -57,7 +58,7 @@ import zipfile
 from kaggle_secrets import UserSecretsClient
 
 PROJECT_DIR = Path("/kaggle/working/Luan-Van-GC-LSTM-GhostNet-CICDDoS2019-v1")
-OUTPUT_DIR = PROJECT_DIR / "outputs" / "step3_smoke"
+OUTPUT_DIR = PROJECT_DIR / "outputs" / "step4_smoke"
 MOUNTED_DATA_DIR = Path("/kaggle/input/datasets/dungnguyen28101991/cicddos2019-parquet")
 DOWNLOADED_DATA_DIR = Path("/kaggle/working/cicddos2019-parquet-input")
 PROJECT_ARCHIVE_B64 = "{archive}"
@@ -97,10 +98,10 @@ else:
     for key in ("KAGGLE_API_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY"):
         download_env.pop(key, None)
     del secret_value
-print(f"Step 3 project ready; using dataset at {{DATA_DIR}}")
+print(f"Step 4 project ready; using dataset at {{DATA_DIR}}")
 '''
     run_source = '''command = [
-    sys.executable, "-m", "src.step3_smoke",
+    sys.executable, "train.py",
     "--data-dir", str(DATA_DIR),
     "--output-dir", str(OUTPUT_DIR),
     "--config", "configs/base.yaml",
@@ -108,33 +109,36 @@ print(f"Step 3 project ready; using dataset at {{DATA_DIR}}")
     "--samples-per-file", "2048",
     "--sequence-length", "16",
     "--sequence-stride", "8",
+    "--epochs", "2",
+    "--batch-size", "64",
+    "--run-name", "kaggle-step4-smoke",
 ]
 subprocess.run(command, cwd=PROJECT_DIR, check=True)
 '''
-    verify_source = '''summary_path = OUTPUT_DIR / "step3_summary.json"
+    verify_source = '''summary_path = OUTPUT_DIR / "step4_summary.json"
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
 assert summary["status"] == "passed", summary
-for run in summary["runs"]:
-    assert run["row_split_leakage_status"] == "passed", run
-    assert run["sequence_leakage_status"] == "passed", run
-    assert all(count > 0 for count in run["sequence_counts"].values()), run
+assert summary["sequence_leakage_status"] == "passed", summary
+assert summary["best_epoch"] in (1, 2), summary
+assert (OUTPUT_DIR / "training" / "best_model.pt").exists()
+assert (OUTPUT_DIR / "training" / "test_metrics.json").exists()
 summary
 '''
     return {
         "cells": [
             {
                 "cell_type": "markdown",
-                "id": "step3-intro",
+                "id": "step4-intro",
                 "metadata": {},
                 "source": [
-                    "# GC-LSTM-GhostNet - Step 3 graph and sequence smoke test\n",
+                    "# GC-LSTM-GhostNet - Step 4 sampled training smoke test\n",
                     "\n",
-                    "Build strict contiguous flow windows and directed endpoint graphs after leakage-safe preprocessing.\n",
+                    "Train GCN â†’ LSTM â†’ temporal attention â†’ GhostNet with leakage-safe contiguous windows.\n",
                 ],
             },
-            code_cell(setup_source, "materialize-step3-project"),
-            code_cell(run_source, "run-step3-smoke"),
-            code_cell(verify_source, "verify-step3-summary"),
+            code_cell(setup_source, "materialize-step4-project"),
+            code_cell(run_source, "run-step4-smoke"),
+            code_cell(verify_source, "verify-step4-summary"),
         ],
         "metadata": {
             "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
