@@ -49,13 +49,10 @@ def build_notebook() -> dict:
     setup_source = f'''from pathlib import Path
 import base64
 import io
-import json
-import os
 import shutil
 import subprocess
 import sys
 import zipfile
-from kaggle_secrets import UserSecretsClient
 
 PROJECT_DIR = Path("/kaggle/working/Luan-Van-GC-LSTM-GhostNet-CICDDoS2019-v1")
 OUTPUT_DIR = PROJECT_DIR / "outputs" / "step6_artifact_smoke"
@@ -63,7 +60,6 @@ MOUNTED_DATA_CANDIDATES = [
     Path("/kaggle/input/cicddos2019-parquet"),
     Path("/kaggle/input/datasets/dungnguyen28101991/cicddos2019-parquet"),
 ]
-DOWNLOADED_DATA_DIR = Path("/kaggle/working/cicddos2019-parquet-input")
 PROJECT_ARCHIVE_B64 = "{archive}"
 
 if PROJECT_DIR.exists():
@@ -84,28 +80,12 @@ if mounted_data_dir is None and next(Path("/kaggle/input").rglob("dataset_summar
 if mounted_data_dir is not None:
     DATA_DIR = mounted_data_dir
 else:
-    DATA_DIR = DOWNLOADED_DATA_DIR
-    if DATA_DIR.exists():
-        shutil.rmtree(DATA_DIR)
-    DATA_DIR.mkdir(parents=True)
-    download_env = os.environ.copy()
-    secret_value = UserSecretsClient().get_secret("KAGGLE_API_TOKEN")
-    try:
-        classic = json.loads(secret_value)
-    except (TypeError, json.JSONDecodeError):
-        download_env["KAGGLE_API_TOKEN"] = secret_value
-    else:
-        download_env["KAGGLE_USERNAME"] = classic["username"]
-        download_env["KAGGLE_KEY"] = classic["key"]
-    subprocess.run(
-        ["kaggle", "datasets", "download", "-d", "dungnguyen28101991/cicddos2019-parquet",
-         "-p", str(DATA_DIR), "--unzip", "--quiet"],
-        env=download_env,
-        check=True,
+    mounted_entries = sorted(str(path) for path in Path("/kaggle/input").iterdir())
+    raise FileNotFoundError(
+        "Dataset input is not attached. In the Kaggle editor choose Add Input -> "
+        "dungnguyen28101991/cicddos2019-parquet, then Save Version / Run All. "
+        f"Current /kaggle/input entries: {{mounted_entries}}"
     )
-    for key in ("KAGGLE_API_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY"):
-        download_env.pop(key, None)
-    del secret_value
 print(f"Step 6 CPU artifact/report project ready; using dataset at {{DATA_DIR}}")
 '''
     run_source = '''command = [
