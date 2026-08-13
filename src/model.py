@@ -99,8 +99,10 @@ class GCLSTMGhostNet(nn.Module):
         self.graph_layers = nn.ModuleList(
             DirectedGraphConv(graph_dim) for _ in range(int(step4["graph_layers"]))
         )
+        concatenated_graph_dim = graph_dim * int(step4["graph_layers"])
+        self.spatial_attention = nn.Linear(concatenated_graph_dim, 1)
         self.edge_fusion = nn.Sequential(
-            nn.Linear(flow_dim + graph_dim * 2, graph_dim),
+            nn.Linear(flow_dim + concatenated_graph_dim * 2, graph_dim),
             nn.LayerNorm(graph_dim),
             nn.ReLU(),
         )
@@ -132,7 +134,7 @@ class GCLSTMGhostNet(nn.Module):
         flow_embeddings: torch.Tensor,
         edge_index: torch.Tensor,
         node_count: int,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         source, destination = edge_index
         if edge_index.shape[1] != flow_embeddings.shape[0]:
             raise ValueError("Each temporal flow requires exactly one graph edge")
@@ -147,15 +149,22 @@ class GCLSTMGhostNet(nn.Module):
         for layer in self.graph_layers:
             nodes = layer(nodes, edge_index)
             layer_outputs.append(nodes)
-        nodes = torch.stack(layer_outputs, dim=0).mean(dim=0)
-        return self.edge_fusion(torch.cat((flow_embeddings, nodes[source], nodes[destination]), dim=1))
+        nodes = torch.cat(layer_outputs, dim=1)
+        spatial_weights = torch.softmax(self.spatial_attention(nodes).squeeze(-1), dim=0)
+        attended_nodes = nodes * spatial_weights.unsqueeze(1)
+        fused = self.edge_fusion(
+            torch.cat((flow_embeddings, attended_nodes[source], attended_nodes[destination]), dim=1)
+        )
+        return fused, spatial_weights
 
     def forward(self, batch: GraphBatch) -> tuple[torch.Tensor, torch.Tensor]:
         flow = self.flow_encoder(batch.sequence_x)
-        spatial = torch.stack([
+        spatial_outputs = [
             self._spatial_sequence(flow[index], batch.edge_index[index], int(batch.node_counts[index]))
             for index in range(flow.shape[0])
-        ])
+        ]
+        spatial = torch.stack([item[0] for item in spatial_outputs])
+        self.last_spatial_attention = tuple(item[1] for item in spatial_outputs)
         temporal, _ = self.lstm(spatial)
         attention = torch.softmax(self.temporal_attention(temporal).squeeze(-1), dim=1)
         attended = torch.sum(temporal * attention.unsqueeze(-1), dim=1)
@@ -168,4 +177,3 @@ def model_parameter_count(model: nn.Module) -> dict[str, int]:
         "total": sum(parameter.numel() for parameter in model.parameters()),
         "trainable": sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad),
     }
-
