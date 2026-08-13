@@ -333,6 +333,9 @@ def _write_final_artifacts(
 
     metrics = _metric_payload(test_result)
     metrics.update({"training_time_seconds": training_seconds, "peak_memory_mb": peak_memory_mb})
+    np.save(output / "y_true.npy", np.asarray(test_result.y_true, dtype=np.int64))
+    np.save(output / "y_prob.npy", np.asarray(test_result.probabilities, dtype=np.float32))
+    write_json(output / "label_mapping.json", {name: index for index, name in enumerate(class_names)})
     write_json(output / "history.json", history)
     write_json(output / "test_metrics.json", metrics)
     with (output / "summary_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -359,6 +362,7 @@ def _write_final_artifacts(
         output / name for name in (
             "history.json", "test_metrics.json", "summary_metrics.csv", "confusion_matrix.csv",
             "confusion_matrix.png", "accuracy_curve.png", "loss_curve.png", "auc_curve.png",
+            "y_true.npy", "y_prob.npy", "label_mapping.json",
         )
     ]
 
@@ -453,6 +457,7 @@ def train_model(
     peak_memory_mb = process.memory_info().rss / (1024 ** 2)
     training_started = time.perf_counter()
     for epoch in range(start_epoch, int(epochs) + 1):
+        epoch_started = time.perf_counter()
         train_generator = torch.Generator().manual_seed(int(seed) + int(epoch))
         train_loader = DataLoader(
             GraphSequenceDataset(bundles["train"]),
@@ -487,6 +492,7 @@ def train_model(
             "validation": _metric_payload(validation_result),
             "online_train_loss": online_loss / max(1, online_count),
             "online_train_accuracy": online_correct / max(1, online_count),
+            "epoch_seconds_before_checkpoint": time.perf_counter() - epoch_started,
         }
         history.append(row)
         improved = validation_result.macro_f1 > best_f1
@@ -498,6 +504,7 @@ def train_model(
             contract_hashes, run_id, session_id,
         )
         epoch_path = output / f"epoch_{epoch:03d}.pt"
+        checkpoint_started = time.perf_counter()
         torch.save(payload, epoch_path)
         shutil.copy2(epoch_path, output / "last_checkpoint.pt")
         if improved:
@@ -518,6 +525,8 @@ def train_model(
         if improved:
             uploader.upload(output / "best_model.pt", "checkpoints/best_model.pt")
         uploader.upload(output / "checkpoint_metadata.json", "checkpoints/checkpoint_metadata.json")
+        row["checkpoint_and_upload_seconds"] = time.perf_counter() - checkpoint_started
+        write_json(output / "history.json", history)
         if stop_after_epoch is not None and epoch >= int(stop_after_epoch) and epoch < int(epochs):
             write_json(output / "history.json", history)
             return {
@@ -546,6 +555,10 @@ def train_model(
         "class_names": class_names,
         "feature_count": feature_count,
         "sequence_counts": {split: len(bundle.sequence_x) for split, bundle in bundles.items()},
+        "class_distribution": {
+            split: np.bincount(bundle.target_y, minlength=class_count).astype(int).tolist()
+            for split, bundle in bundles.items()
+        },
         "training_time_seconds": training_seconds,
         "final_epoch": int(final_checkpoint["epoch"]),
         "best_validation_macro_f1": float(final_checkpoint["best_f1"]),
