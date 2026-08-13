@@ -90,6 +90,8 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError("This project is CPU-only; future_training_contract.device must be cpu")
         if bool(contract.get("mixed_precision_on_cuda")):
             raise ValueError("CUDA mixed precision must be disabled for the CPU-only project")
+        if not bool(contract.get("deterministic_algorithms")):
+            raise ValueError("Step 5 resume validation requires deterministic algorithms")
 
 
 def config_hash(config: dict[str, Any]) -> str:
