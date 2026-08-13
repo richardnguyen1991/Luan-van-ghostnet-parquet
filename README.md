@@ -99,6 +99,24 @@ BUCKET --s3-prefix PREFIX --aws-region REGION` to upload checkpoints and final
 artifacts. AWS credentials must be supplied through environment variables or
 Kaggle Secrets; they are not accepted as command-line arguments.
 
+Step 5 deterministic resume acceptance (CPU only):
+
+```bash
+python -m src.step5_resume_smoke \
+  --data-dir /kaggle/input \
+  --output-dir /kaggle/working/gc_lstm_ghostnet_step5 \
+  --samples-per-file 2048 \
+  --batch-size 64 \
+  --device cpu
+```
+
+This executes a three-epoch uninterrupted reference and a second run that
+stops after epoch 2 and resumes at epoch 3. Acceptance requires an exact match
+of every final model tensor and a contiguous `[1, 2, 3]` history. Checkpoints
+include optimizer/scheduler/RNG state plus config, preprocessing, selected
+feature, and graph hashes. S3 writes use a temporary object, verify size and
+SHA-256 metadata, copy to the final key, then delete the temporary object.
+
 The bundled private Kaggle notebook first uses the attached dataset under
 `/kaggle/input`. Only when that mount is absent does it retrieve
 `KAGGLE_API_TOKEN` through Kaggle Secrets and pass it to the download
