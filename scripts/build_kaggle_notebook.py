@@ -58,7 +58,7 @@ import zipfile
 from kaggle_secrets import UserSecretsClient
 
 PROJECT_DIR = Path("/kaggle/working/Luan-Van-GC-LSTM-GhostNet-CICDDoS2019-v1")
-OUTPUT_DIR = PROJECT_DIR / "outputs" / "step5_resume_smoke"
+OUTPUT_DIR = PROJECT_DIR / "outputs" / "step6_artifact_smoke"
 MOUNTED_DATA_CANDIDATES = [
     Path("/kaggle/input/cicddos2019-parquet"),
     Path("/kaggle/input/datasets/dungnguyen28101991/cicddos2019-parquet"),
@@ -106,10 +106,10 @@ else:
     for key in ("KAGGLE_API_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY"):
         download_env.pop(key, None)
     del secret_value
-print(f"Step 5 CPU resume project ready; using dataset at {{DATA_DIR}}")
+print(f"Step 6 CPU artifact/report project ready; using dataset at {{DATA_DIR}}")
 '''
     run_source = '''command = [
-    sys.executable, "-m", "src.step5_resume_smoke",
+    sys.executable, "-m", "src.step6_artifact_smoke",
     "--data-dir", str(DATA_DIR),
     "--output-dir", str(OUTPUT_DIR),
     "--samples-per-file", "2048",
@@ -117,35 +117,35 @@ print(f"Step 5 CPU resume project ready; using dataset at {{DATA_DIR}}")
     "--sequence-stride", "8",
     "--batch-size", "64",
     "--device", "cpu",
-    "--run-name", "kaggle-step5-resume-smoke",
 ]
 subprocess.run(command, cwd=PROJECT_DIR, check=True)
 '''
-    verify_source = '''summary_path = OUTPUT_DIR / "step5_resume_summary.json"
+    verify_source = '''summary_path = OUTPUT_DIR / "step6_summary.json"
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
 assert summary["status"] == "passed", summary
 assert summary["device"] == "cpu", summary
 assert summary["sequence_leakage_status"] == "passed", summary
-assert summary["history_epochs"] == [1, 2, 3], summary
-assert summary["state_comparison"]["exact_match"], summary
-assert (OUTPUT_DIR / "resumed" / "final_model_epoch_003.pt").exists()
+assert summary["expected_not_yet_run"] == ["ablation_comparison", "cfaco_convergence"], summary
+assert len(summary["report"]["produced"]) == 11, summary
+assert (OUTPUT_DIR / "report" / "report_status.json").exists()
+assert (OUTPUT_DIR / "artifacts" / "benchmark.json").exists()
 summary
 '''
     return {
         "cells": [
             {
                 "cell_type": "markdown",
-                "id": "step5-intro",
+                "id": "step6-intro",
                 "metadata": {},
                 "source": [
-                    "# GC-LSTM-GhostNet - Step 5 CPU checkpoint/resume acceptance\n",
+                    "# GC-LSTM-GhostNet - Step 6 CPU artifact, explainability, and benchmark\n",
                     "\n",
-                    "Run 3 epochs continuously, interrupt a second run after epoch 2, resume at epoch 3, and require exact model-state equality.\n",
+                    "Train a bounded smoke model, create real attention/Integrated-Gradients artifacts, benchmark CPU inference, then regenerate the report from artifacts only.\n",
                 ],
             },
-            code_cell(setup_source, "materialize-step5-project"),
-            code_cell(run_source, "run-step5-resume-smoke"),
-            code_cell(verify_source, "verify-step5-summary"),
+            code_cell(setup_source, "materialize-step6-project"),
+            code_cell(run_source, "run-step6-artifact-smoke"),
+            code_cell(verify_source, "verify-step6-summary"),
         ],
         "metadata": {
             "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
