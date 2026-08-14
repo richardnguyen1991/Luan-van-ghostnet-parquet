@@ -9,6 +9,8 @@ import random
 import shutil
 import time
 import uuid
+import urllib.error
+import urllib.request
 import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -166,39 +168,82 @@ class S3ArtifactUploader:
         self.max_retries = int(max_retries)
         self.required = bool(required)
         self.client = None
+        self.presigned: dict[str, Any] | None = None
+        self.resume_required = False
         self.transfer_seconds = 0.0
         if self.enabled:
-            if not bucket:
-                raise ValueError("--s3-bucket is required when S3 upload is enabled")
-            import boto3
+            config_path = os.environ.get("S3_PRESIGNED_CONFIG_PATH")
+            if config_path:
+                self.presigned = json.loads(Path(config_path).read_text(encoding="utf-8"))
+                self.bucket = str(self.presigned["bucket"])
+                self.resume_required = bool(self.presigned.get("resume_required", False))
+            else:
+                if not bucket:
+                    raise ValueError("--s3-bucket is required when S3 upload is enabled")
+                import boto3
 
-            self.client = boto3.client("s3", region_name=region)
+                self.client = boto3.client("s3", region_name=region)
 
-    def upload(self, local_path: str | Path, relative_key: str) -> bool:
+    def _key(self, relative_key: str) -> str:
+        return "/".join(part for part in (self.prefix, relative_key.replace("\\", "/")) if part)
+
+    def _presigned_transfer(self, method: str, url: str, path: Path) -> None:
+        if method == "PUT":
+            request = urllib.request.Request(url, data=path.read_bytes(), method="PUT")
+            with urllib.request.urlopen(request, timeout=300) as response:
+                response.read()
+            return
+        temporary = path.with_name(f".{path.name}.download-{uuid.uuid4().hex}")
+        try:
+            with urllib.request.urlopen(url, timeout=300) as response:
+                temporary.write_bytes(response.read())
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def upload_key(self, local_path: str | Path, key: str) -> bool:
         if not self.enabled:
             return False
-        transfer_started = time.perf_counter()
         path = Path(local_path)
-        key = "/".join(part for part in (self.prefix, relative_key.replace("\\", "/")) if part)
+        transfer_started = time.perf_counter()
         last_error: Exception | None = None
+        if self.presigned is not None:
+            url = self.presigned.get("uploads", {}).get(key)
+            if not url:
+                message = f"No presigned upload URL was issued for S3 key {key}"
+                if self.required:
+                    raise RuntimeError(message)
+                warnings.warn(message)
+                return False
+            for attempt in range(self.max_retries + 1):
+                try:
+                    self._presigned_transfer("PUT", str(url), path)
+                    self.transfer_seconds += time.perf_counter() - transfer_started
+                    return True
+                except Exception as exc:
+                    last_error = exc
+                    if attempt < self.max_retries:
+                        time.sleep(min(2 ** attempt, 8))
+            message = f"Presigned S3 upload failed for {path.name}: {type(last_error).__name__}"
+            self.transfer_seconds += time.perf_counter() - transfer_started
+            if self.required:
+                raise RuntimeError(message) from last_error
+            warnings.warn(message)
+            return False
+
         checksum = hashlib.sha256(path.read_bytes()).hexdigest()
         temporary_key = f"{key}.tmp-{uuid.uuid4().hex}"
         for attempt in range(self.max_retries + 1):
             try:
                 assert self.client is not None and self.bucket is not None
-                self.client.upload_file(
-                    str(path), self.bucket, temporary_key,
-                    ExtraArgs={"Metadata": {"sha256": checksum}},
-                )
+                self.client.upload_file(str(path), self.bucket, temporary_key,
+                                        ExtraArgs={"Metadata": {"sha256": checksum}})
                 temporary = self.client.head_object(Bucket=self.bucket, Key=temporary_key)
                 if int(temporary["ContentLength"]) != path.stat().st_size:
                     raise RuntimeError("temporary S3 object size mismatch")
-                self.client.copy_object(
-                    Bucket=self.bucket,
-                    Key=key,
-                    CopySource={"Bucket": self.bucket, "Key": temporary_key},
-                    MetadataDirective="COPY",
-                )
+                self.client.copy_object(Bucket=self.bucket, Key=key,
+                                        CopySource={"Bucket": self.bucket, "Key": temporary_key},
+                                        MetadataDirective="COPY")
                 final = self.client.head_object(Bucket=self.bucket, Key=key)
                 if int(final["ContentLength"]) != path.stat().st_size:
                     raise RuntimeError("final S3 object size mismatch")
@@ -207,7 +252,7 @@ class S3ArtifactUploader:
                 self.client.delete_object(Bucket=self.bucket, Key=temporary_key)
                 self.transfer_seconds += time.perf_counter() - transfer_started
                 return True
-            except Exception as exc:  # boto3 exposes several optional exception packages
+            except Exception as exc:
                 last_error = exc
                 if attempt < self.max_retries:
                     time.sleep(min(2 ** attempt, 8))
@@ -221,6 +266,37 @@ class S3ArtifactUploader:
         if self.required:
             raise RuntimeError(message) from last_error
         warnings.warn(message)
+        return False
+
+    def upload(self, local_path: str | Path, relative_key: str) -> bool:
+        return self.upload_key(local_path, self._key(relative_key))
+
+    def download(self, relative_key: str, destination: str | Path, required: bool = False) -> bool:
+        if not self.enabled:
+            return False
+        key = self._key(relative_key)
+        path = Path(destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        last_error: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                if self.presigned is not None:
+                    url = self.presigned.get("downloads", {}).get(key)
+                    if not url:
+                        raise FileNotFoundError(f"No presigned download URL for {key}")
+                    self._presigned_transfer("GET", str(url), path)
+                else:
+                    assert self.client is not None and self.bucket is not None
+                    self.client.download_file(self.bucket, key, str(path))
+                return True
+            except Exception as exc:
+                last_error = exc
+                if attempt < self.max_retries:
+                    time.sleep(min(2 ** attempt, 8))
+        path.unlink(missing_ok=True)
+        if required:
+            message = f"S3 download failed for {key}: {type(last_error).__name__}"
+            raise RuntimeError(message) from last_error
         return False
 
 
@@ -308,280 +384,263 @@ def _plot_history(history: list[dict[str, Any]], output: Path) -> None:
             values = [row["validation"].get(key) for row in history]
             axis.plot(epochs, [np.nan if value is None else value for value in values], label="validation")
         else:
-            axis.plot(epochs, [row["train"][key] for row in history], label="train")
-            axis.plot(epochs, [row["validation"][key] for row in history], label="validation")
-        axis.set(title=title, xlabel="Epoch", ylabel=ylabel)
-        axis.grid(alpha=0.25)
-        axis.legend()
-        figure.tight_layout()
-        figure.savefig(output / file_name, dpi=160)
-        plt.close(figure)
-
-
-def _write_final_artifacts(
-    output: Path,
-    history: list[dict[str, Any]],
-    test_result: EvaluationResult,
-    class_names: list[str],
-    training_seconds: float,
-    peak_memory_mb: float,
-) -> list[Path]:
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    metrics = _metric_payload(test_result)
-    metrics.update({"training_time_seconds": training_seconds, "peak_memory_mb": peak_memory_mb})
-    np.save(output / "y_true.npy", np.asarray(test_result.y_true, dtype=np.int64))
-    np.save(output / "y_prob.npy", np.asarray(test_result.probabilities, dtype=np.float32))
-    write_json(output / "label_mapping.json", {name: index for index, name in enumerate(class_names)})
-    write_json(output / "history.json", history)
-    write_json(output / "test_metrics.json", metrics)
-    with (output / "summary_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["metric", "value"])
-        writer.writerows(metrics.items())
-    matrix = confusion_matrix(test_result.y_true, test_result.y_pred, labels=range(len(class_names)))
-    with (output / "confusion_matrix.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["actual/predicted", *class_names])
-        for label, row in zip(class_names, matrix):
-            writer.writerow([label, *row.tolist()])
-    figure, axis = plt.subplots(figsize=(max(7, len(class_names) * 0.55), max(6, len(class_names) * 0.5)))
-    image = axis.imshow(matrix, cmap="Blues")
-    figure.colorbar(image, ax=axis)
-    axis.set_xticks(range(len(class_names)), class_names, rotation=90)
-    axis.set_yticks(range(len(class_names)), class_names)
-    axis.set(xlabel="Predicted", ylabel="Actual", title="Confusion matrix")
-    figure.tight_layout()
-    figure.savefig(output / "confusion_matrix.png", dpi=160)
-    plt.close(figure)
-    _plot_history(history, output)
-    return [
-        output / name for name in (
-            "history.json", "test_metrics.json", "summary_metrics.csv", "confusion_matrix.csv",
-            "confusion_matrix.png", "accuracy_curve.png", "loss_curve.png", "auc_curve.png",
-            "y_true.npy", "y_prob.npy", "label_mapping.json",
-        )
-    ]
-
-
-def train_model(
-    bundles: dict[str, SequenceGraphTensors],
-    preprocessing_metadata: dict[str, Any],
-    config: dict[str, Any],
-    output_dir: str | Path,
-    epochs: int,
-    batch_size: int,
-    learning_rate: float,
-    seed: int,
-    run_arguments: dict[str, Any],
-    uploader: S3ArtifactUploader | None = None,
-    resume_from: str | Path | None = None,
-    stop_after_epoch: int | None = None,
-) -> dict[str, Any]:
-    import psutil
-
-    output = Path(output_dir)
+            axis.plot(epochs, ç6öÚ$z{-®éÜj×aithful still requires CFACO/GAIN ablations")
+    if args.epochs != 100:
+        raise ValueError("Step 8 acceptance requires exactly 100 target epochs")
+    config = load_config(args.config, args.mode_config)
+    config["project"]["seed"] = args.seed
+    config["step4"]["outer_train_fraction"] = args.outer_train_fraction
+    config["data"]["sequence_group_rows"] = args.sequence_group_rows
+    if args.target_column:
+        config["data"]["label_candidates"] = [args.target_column]
+    output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    random.seed(int(seed))
-    np.random.seed(int(seed))
-    torch.manual_seed(int(seed))
+    paths = discover_dataset(args.data_dir, config["data"]["dataset_dir_hint"], config["data"]["expected_source_files"])
+    contract = validate_dataset_manifests(paths, config["data"])
+    label_column = contract["label_column"]
+    groups = build_group_manifest(paths, args.sequence_group_rows, args.outer_train_fraction, args.seed)
+    manifest = manifest_summary(groups)
+    manifest.update({
+        "outer_train_fraction": args.outer_train_fraction,
+        "effective_train_fraction": args.outer_train_fraction * 0.9,
+        "validation_fraction": args.outer_train_fraction * 0.1,
+        "test_fraction": 1.0 - args.outer_train_fraction,
+        "schedule_rule": "all train groups exactly once; Random(seed + epoch)",
+        "shuffle_buffer_changes_order_only": True,
+    })
+    write_json(output / "sample_manifest.json", manifest)
+
+    label_audit = audit_group_label_schema(paths, groups, label_column)
+    write_json(output / "label_schema_audit.json", label_audit)
+
+    # Full scan with bounded whole-group reservoir retention. Only retained train
+    # groups are used to fit preprocessing; validation/test are transform-only.
+    per_file_groups = max(1, math.ceil(args.stream_eval_samples_per_file / args.sequence_group_rows))
+    reservoirs = reservoir_groups(paths, groups, per_file_groups, args.seed)
+    processor, preprocessing_metadata = fit_streaming_proxy(
+        reservoirs,
+        label_column,
+        config,
+        args.seed,
+        label_vocabulary=label_audit["label_vocabulary"],
+    )
+    preprocessing_metadata.update({
+        "label_mapping_scope": label_audit["scope"],
+        "label_schema_audit_hash": _stable_hash(label_audit),
+        "label_counts_by_split": label_audit["label_counts_by_split"],
+        "labels_missing_from_split": label_audit["labels_missing_from_split"],
+    })
+    processor.save(output, preprocessing_metadata)
+    joblib.dump(processor, output / "preprocessor.joblib")
+    eval_bundles = {}
+    for split in ("train", "validation", "test"):
+        built = [
+            bundle for frame in reservoirs[split]
+            if (bundle := transform_group(frame, split, label_column, processor, config)) is not None
+        ]
+        if not built:
+            raise RuntimeError(f"No fixed {split} reservoir sequences")
+        eval_bundles[split] = concatenate_bundles(built)
+
+    random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
     torch.use_deterministic_algorithms(True)
-    requested_device = str(run_arguments.get("device", config["future_training_contract"]["device"]))
-    if requested_device != "cpu":
-        raise ValueError("Only CPU execution is supported by this project")
-    device = torch.device("cpu")
-    label_mapping = preprocessing_metadata["label_mapping"]
-    class_names = [label for label, _ in sorted(label_mapping.items(), key=lambda item: item[1])]
-    class_count = len(class_names)
-    feature_count = int(bundles["train"].sequence_x.shape[2])
-    model = GCLSTMGhostNet(feature_count, class_count, config).to(device)
-    evaluation_loaders = {
-        split: DataLoader(
-            GraphSequenceDataset(bundle),
-            batch_size=int(batch_size),
-            shuffle=False,
-            collate_fn=collate_graph_sequences,
-            num_workers=0,
-        )
-        for split, bundle in bundles.items()
-    }
-    if config["step4"].get("class_weighting") != "none":
-        raise ValueError("The approved practical baseline does not use class weighting")
+    class_names = [name for name, _ in sorted(processor.label_mapping.items(), key=lambda item: item[1])]
+    model = GCLSTMGhostNet(len(processor.feature_columns), len(class_names), config)
     criterion = nn.CrossEntropyLoss()
-    contract = config["future_training_contract"]
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=float(learning_rate),
-        weight_decay=float(contract["weight_decay"]),
-    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate,
+                                  weight_decay=float(config["future_training_contract"]["weight_decay"]))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=max(1, int(epochs)),
-        eta_min=float(contract["min_learning_rate"]),
+        optimizer, T_max=args.epochs,
+        eta_min=float(config["future_training_contract"]["min_learning_rate"]),
     )
-    history: list[dict[str, Any]] = []
+    history = []
     best_f1 = -math.inf
-    start_epoch = 1
-    run_id = str(run_arguments.get("run_name") or "step5")
-    session_id = str(run_arguments.get("session_id") or uuid.uuid4().hex)
+    epoch = 1
+    cursor = 0
+    generated = 0
+    consumed = 0
+    resume_online = {"loss_sum": 0.0, "correct": 0, "count": 0, "flush_index": 0}
+    run_id = args.run_name
+    session_id = args.session_id or uuid.uuid4().hex
     contract_hashes = {
-        "config": _stable_hash(config),
-        "schema": _stable_hash({
-            "feature_order": preprocessing_metadata["feature_order"],
-            "label_mapping": preprocessing_metadata["label_mapping"],
-        }),
+        "config": config_hash(config),
+        "schema": str(contract["schema"]["schema_hash"]),
         "preprocessing": _stable_hash(preprocessing_metadata),
-        "selected_features": _stable_hash(preprocessing_metadata["feature_order"]),
-        "graph": _stable_hash({split: bundle.metadata for split, bundle in bundles.items()}),
+        "selected_features": _stable_hash(processor.feature_columns),
+        "graph": _stable_hash(config["step3"]),
+        "group_manifest": _stable_hash(manifest),
     }
-    if resume_from is not None:
-        checkpoint = torch.load(Path(resume_from), map_location=device, weights_only=False)
-        if checkpoint.get("contract_hashes") != contract_hashes:
-            raise ValueError("Resume checkpoint contract hashes do not match this run")
-        if checkpoint.get("run_id") != run_id:
-            raise ValueError("Resume checkpoint run_id does not match --run-name")
-        model.load_state_dict(checkpoint["model"])
-        optimizer.load_state_dict(checkpoint["optimizer"])
-        scheduler.load_state_dict(checkpoint["scheduler"])
-        history = list(checkpoint["history"])
-        best_f1 = float(checkpoint["best_f1"])
-        start_epoch = int(checkpoint["epoch"]) + 1
-        _restore_rng_state(checkpoint["rng_state"])
-        if start_epoch > int(epochs):
-            raise ValueError("Resume checkpoint is already at or beyond the target epoch")
-    uploader = uploader or S3ArtifactUploader(False, None, "", None, 0, False)
-    process = psutil.Process(os.getpid())
-    peak_memory_mb = process.memory_info().rss / (1024 ** 2)
+    prefix = "/".join(part.strip("/") for part in (args.s3_prefix, "gc-lstm-ghostnet", run_id) if part)
+    uploader = S3ArtifactUploader(args.upload_checkpoints_to_s3, args.s3_bucket, prefix,
+                                  args.aws_region, args.s3_max_retries, args.s3_upload_required)
+    for artifact in (
+        output / "sample_manifest.json", output / "label_schema_audit.json",
+        output / "preprocessing.json", output / "preprocessor.joblib",
+    ):
+        uploader.upload(artifact, f"artifacts/{artifact.name}")
+
+    resume = _find_resume(args.resume, output, uploader)
+    if args.resume is not None and resume is None and uploader.resume_required:
+        raise FileNotFoundError("S3 active run requires resume, but its last checkpoint could not be downloaded")
+    if args.resume is not None and resume is None:
+        print("No resumable checkpoint exists; starting the new exhaustive-label run at epoch 1")
+    if resume is not None:
+        checkpoint = torch.load(resume, map_location="cpu", weights_only=False)
+        checkpoint_mapping = checkpoint.get("preprocessing_metadata", {}).get("label_mapping")
+        if checkpoint_mapping != preprocessing_metadata["label_mapping"]:
+            raise ValueError(
+                "Resume checkpoint label mapping is incompatible with the exhaustive "
+                "dataset label audit; start a new run from epoch 1"
+            )
+        if checkpoint["contract_hashes"] != contract_hashes or checkpoint["run_id"] != run_id:
+            raise ValueError("Resume checkpoint contract/run mismatch")
+        model.load_state_dict(checkpoint["model"]); optimizer.load_state_dict(checkpoint["optimizer"])
+        scheduler.load_state_dict(checkpoint["scheduler"]); _restore_rng_state(checkpoint["rng_state"])
+        history = checkpoint["history"]; best_f1 = checkpoint["best_f1"]
+        epoch = checkpoint["epoch"]; cursor = checkpoint["progress_cursor"]
+        epoch = checkpoint.get("next_epoch", epoch)
+        generated = checkpoint["generated_train_sequences"]; consumed = checkpoint["consumed_train_sequences"]
+        resume_online = checkpoint.get("epoch_online", resume_online)
+
+    session_deadline = time.monotonic() + max(1, args.session_budget_minutes - 20) * 60
     training_started = time.perf_counter()
-    for epoch in range(start_epoch, int(epochs) + 1):
-        epoch_started = time.perf_counter()
-        train_generator = torch.Generator().manual_seed(int(seed) + int(epoch))
-        train_loader = DataLoader(
-            GraphSequenceDataset(bundles["train"]),
-            batch_size=int(batch_size),
-            shuffle=True,
-            generator=train_generator,
-            collate_fn=collate_graph_sequences,
-            num_workers=0,
-        )
-        model.train()
-        online_loss = 0.0
-        online_correct = 0
-        online_count = 0
-        for batch in train_loader:
-            batch = batch.to(device)
-            optimizer.zero_grad(set_to_none=True)
-            logits, _ = model(batch)
-            loss = criterion(logits, batch.target_y)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), float(contract["gradient_clip_norm"]))
-            optimizer.step()
-            online_loss += float(loss.detach().cpu()) * len(batch.target_y)
-            online_correct += int((logits.argmax(dim=1) == batch.target_y).sum().detach().cpu())
-            online_count += len(batch.target_y)
-            peak_memory_mb = max(peak_memory_mb, process.memory_info().rss / (1024 ** 2))
-        train_result = evaluate(model, evaluation_loaders["train"], criterion, device, class_count)
-        validation_result = evaluate(model, evaluation_loaders["validation"], criterion, device, class_count)
-        row = {
-            "epoch": epoch,
-            "learning_rate": optimizer.param_groups[0]["lr"],
-            "train": _metric_payload(train_result),
-            "validation": _metric_payload(validation_result),
+    peak_memory_mb = 0.0
+    process = psutil.Process(os.getpid())
+
+    def update_active(status: str, completed_epoch: int) -> None:
+        active = output / "active_run.json"
+        write_json(active, {
+            "run_id": run_id,
+            "status": status,
+            "completed_epoch": completed_epoch,
+            "active_epoch": epoch,
+            "progress_cursor": cursor,
+            "generated_train_sequences": generated,
+            "consumed_train_sequences": consumed,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "contract_version": "exhaustive-label-v1",
+            "device": "cpu",
+        })
+        active_key = "/".join(part.strip("/") for part in (args.s3_prefix, "active_run.json") if part)
+        uploader.upload_key(active, active_key)
+
+    update_active("running", max(0, epoch - 1))
+
+    def save_checkpoint(complete_epoch: bool) -> Path:
+        checkpoint_epoch = epoch if complete_epoch else epoch - 1
+        payload = {
+            "epoch": checkpoint_epoch, "active_epoch": epoch,
+            "next_epoch": epoch + 1 if complete_epoch else epoch,
+            "progress_cursor": 0 if complete_epoch else cursor,
+            "model": model.state_dict(), "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(), "grad_scaler": None,
+            "best_f1": best_f1, "history": history, "rng_state": _rng_state(),
+            "config": config, "preprocessing_metadata": preprocessing_metadata,
+            "contract_hashes": contract_hashes, "run_id": run_id, "session_id": session_id,
+            "generated_train_sequences": generated, "consumed_train_sequences": consumed,
+            "epoch_online": ({
+                "loss_sum": online_loss, "correct": online_correct,
+                "count": online_count, "flush_index": flush_index,
+            } if not complete_epoch else {"loss_sum": 0.0, "correct": 0, "count": 0, "flush_index": 0}),
+            "manifest_references": {"sample_manifest": "sample_manifest.json", "preprocessing": "preprocessing.json"},
+        }
+        path = output / (f"epoch_{epoch:03d}.pt" if complete_epoch else "emergency_checkpoint.pt")
+        torch.save(payload, path); shutil.copy2(path, output / "last_checkpoint.pt")
+        write_json(output / "checkpoint_metadata.json", {
+            key: payload[key] for key in ("epoch", "active_epoch", "next_epoch", "progress_cursor", "best_f1", "contract_hashes", "run_id", "session_id", "generated_train_sequences", "consumed_train_sequences")
+        })
+        uploader.upload(path, f"checkpoints/{path.name}")
+        uploader.upload(output / "last_checkpoint.pt", "checkpoints/last_checkpoint.pt")
+        uploader.upload(output / "checkpoint_metadata.json", "checkpoints/checkpoint_metadata.json")
+        update_active("running" if complete_epoch else "paused", checkpoint_epoch)
+        return path
+
+    while epoch <= args.epochs:
+        schedule = epoch_schedule(groups, epoch, args.seed)
+        buffer = []
+        buffered = 0
+        online_loss = float(resume_online["loss_sum"]); online_correct = int(resume_online["correct"])
+        online_count = int(resume_online["count"]); flush_index = int(resume_online["flush_index"])
+        resume_online = {"loss_sum": 0.0, "correct": 0, "count": 0, "flush_index": 0}
+
+        def flush() -> None:
+            nonlocal buffer, buffered, online_loss, online_correct, online_count, consumed, flush_index, peak_memory_mb
+            if not buffer: return
+            bundle = concatenate_bundles(buffer)
+            generated_now = len(bundle.sequence_x)
+            loader = _loader(bundle, args.batch_size, True, args.seed + epoch * 100000 + flush_index)
+            model.train()
+            for batch in loader:
+                optimizer.zero_grad(set_to_none=True); logits, _ = model(batch)
+                loss = criterion(logits, batch.target_y); loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), float(config["future_training_contract"]["gradient_clip_norm"]))
+                optimizer.step()
+                online_loss += float(loss.detach()) * len(batch.target_y)
+                online_correct += int((logits.argmax(1) == batch.target_y).sum())
+                online_count += len(batch.target_y)
+                peak_memory_mb = max(peak_memory_mb, process.memory_info().rss / (1024 ** 2))
+            consumed += generated_now; flush_index += 1; buffer = []; buffered = 0
+            del bundle, loader; gc.collect()
+
+        while cursor < len(schedule):
+            group = schedule[cursor]
+            frame = read_group(paths, group)
+            bundle = transform_group(frame, "train", label_column, processor, config)
+            cursor += 1
+            if bundle is not None:
+                generated += len(bundle.sequence_x); buffer.append(bundle); buffered += len(bundle.sequence_x)
+            if buffered >= args.stream_shuffle_buffer_sequences:
+                flush()
+            if time.monotonic() >= session_deadline:
+                flush(); save_checkpoint(False)
+                write_json(output / "step8_session_summary.json", {
+                    "status": "controlled_session_stop", "active_epoch": epoch,
+                    "next_group_cursor": cursor, "groups_in_epoch": len(schedule),
+                    "generated_train_sequences": generated, "consumed_train_sequences": consumed,
+                    "counts_equal_at_safe_stop": generated == consumed, "device": "cpu",
+                })
+                uploader.upload(output / "step8_session_summary.json", "status/step8_session_summary.json")
+                print(json.dumps(json.loads((output / "step8_session_summary.json").read_text()), indent=2)); return
+        flush()
+        if generated != consumed:
+            raise RuntimeError(f"Full streaming dropped sequences: generated={generated}, consumed={consumed}")
+        train_result = evaluate(model, _loader(eval_bundles["train"], args.batch_size), criterion, torch.device("cpu"), len(class_names))
+        val_result = evaluate(model, _loader(eval_bundles["validation"], args.batch_size), criterion, torch.device("cpu"), len(class_names))
+        history.append({
+            "epoch": epoch, "learning_rate": optimizer.param_groups[0]["lr"],
+            "train": _metric_payload(train_result), "validation": _metric_payload(val_result),
             "online_train_loss": online_loss / max(1, online_count),
             "online_train_accuracy": online_correct / max(1, online_count),
-            "epoch_seconds_before_checkpoint": time.perf_counter() - epoch_started,
-        }
-        history.append(row)
-        improved = validation_result.macro_f1 > best_f1
-        best_f1 = max(best_f1, validation_result.macro_f1)
-        scheduler.step()
-        payload = _checkpoint_payload(
-            epoch, model, optimizer, scheduler, best_f1, history,
-            train_result, validation_result, config, preprocessing_metadata, run_arguments,
-            contract_hashes, run_id, session_id,
-        )
-        epoch_path = output / f"epoch_{epoch:03d}.pt"
-        checkpoint_started = time.perf_counter()
-        torch.save(payload, epoch_path)
-        shutil.copy2(epoch_path, output / "last_checkpoint.pt")
+            "generated_train_sequences_cumulative": generated,
+            "consumed_train_sequences_cumulative": consumed,
+        })
+        improved = val_result.macro_f1 > best_f1; best_f1 = max(best_f1, val_result.macro_f1)
+        scheduler.step(); save_checkpoint(True)
         if improved:
-            shutil.copy2(epoch_path, output / "best_model.pt")
-        checkpoint_metadata = {
-            "epoch": epoch,
-            "best_f1": best_f1,
-            "validation": _metric_payload(validation_result),
-            "model_parameters": model_parameter_count(model),
-            "contract_hashes": contract_hashes,
-            "run_id": run_id,
-            "session_id": session_id,
-            "resume_from_epoch": start_epoch - 1,
-        }
-        write_json(output / "checkpoint_metadata.json", checkpoint_metadata)
-        uploader.upload(epoch_path, f"checkpoints/{epoch_path.name}")
-        uploader.upload(output / "last_checkpoint.pt", "checkpoints/last_checkpoint.pt")
-        if improved:
+            shutil.copy2(output / "last_checkpoint.pt", output / "best_model.pt")
             uploader.upload(output / "best_model.pt", "checkpoints/best_model.pt")
-        uploader.upload(output / "checkpoint_metadata.json", "checkpoints/checkpoint_metadata.json")
-        row["checkpoint_and_upload_seconds"] = time.perf_counter() - checkpoint_started
-        write_json(output / "history.json", history)
-        if stop_after_epoch is not None and epoch >= int(stop_after_epoch) and epoch < int(epochs):
-            write_json(output / "history.json", history)
-            return {
-                "status": "controlled_stop",
-                "completed_epoch": epoch,
-                "next_epoch": epoch + 1,
-                "resume_checkpoint": str(output / "last_checkpoint.pt"),
-                "run_id": run_id,
-                "session_id": session_id,
-                "contract_hashes": contract_hashes,
-            }
+        epoch += 1; cursor = 0
 
-    training_seconds = time.perf_counter() - training_started - uploader.transfer_seconds
-    final_path = output / f"final_model_epoch_{int(epochs):03d}.pt"
-    shutil.copy2(output / "last_checkpoint.pt", final_path)
-    final_checkpoint = torch.load(final_path, map_location=device, weights_only=False)
+    final = output / "final_model_epoch_100.pt"; shutil.copy2(output / "last_checkpoint.pt", final)
+    final_checkpoint = torch.load(final, map_location="cpu", weights_only=False)
     model.load_state_dict(final_checkpoint["model"])
-    test_result = evaluate(model, evaluation_loaders["test"], criterion, device, class_count)
-    artifact_paths = _write_final_artifacts(
-        output, history, test_result, class_names, training_seconds, peak_memory_mb
-    )
+    test = evaluate(model, _loader(eval_bundles["test"], args.batch_size), criterion, torch.device("cpu"), len(class_names))
+    artifacts = _write_final_artifacts(output, history, test, class_names,
+                                       time.perf_counter() - training_started - uploader.transfer_seconds,
+                                       peak_memory_mb)
     run_config = {
-        "arguments": run_arguments,
-        "device": str(device),
-        "model_parameters": model_parameter_count(model),
-        "class_names": class_names,
-        "feature_count": feature_count,
-        "sequence_counts": {split: len(bundle.sequence_x) for split, bundle in bundles.items()},
-        "class_distribution": {
-            split: np.bincount(bundle.target_y, minlength=class_count).astype(int).tolist()
-            for split, bundle in bundles.items()
-        },
-        "training_time_seconds": training_seconds,
-        "final_epoch": int(final_checkpoint["epoch"]),
-        "best_validation_macro_f1": float(final_checkpoint["best_f1"]),
-        "run_id": run_id,
-        "session_id": session_id,
-        "resumed_from_epoch": start_epoch - 1,
-        "contract_hashes": contract_hashes,
+        "execution_scope": "full_mixed_group_streaming", "device": "cpu", "epochs": 100,
+        "outer_train_fraction": args.outer_train_fraction, "mode": "practical_baseline",
+        "generated_train_sequences": generated, "consumed_train_sequences": consumed,
+        "counts_equal": generated == consumed, "model_parameters": model_parameter_count(model),
+        "contract_hashes": contract_hashes, "run_id": run_id,
     }
     write_json(output / "run_config.json", run_config)
-    artifact_paths.extend([output / "run_config.json", output / "checkpoint_metadata.json"])
-    artifact_paths.append(final_path)
-    for artifact in artifact_paths:
+    for artifact in [*artifacts, final, output / "run_config.json"]:
         uploader.upload(artifact, f"artifacts/{artifact.name}")
-    return {
-        "status": "passed",
-        "final_epoch": int(final_checkpoint["epoch"]),
-        "best_validation_macro_f1": float(final_checkpoint["best_f1"]),
-        "test_metrics": _metric_payload(test_result),
-        "training_time_seconds": training_seconds,
-        "peak_memory_mb": peak_memory_mb,
-        "model_parameters": model_parameter_count(model),
-        "run_id": run_id,
-        "session_id": session_id,
-        "resumed_from_epoch": start_epoch - 1,
-        "contract_hashes": contract_hashes,
-    }
+    update_active("completed", args.epochs)
+    print(json.dumps({"status": "passed", **run_config, "test_metrics": _metric_payload(test)}, indent=2))
+
+
+if __name__ == "__main__":
+    main()

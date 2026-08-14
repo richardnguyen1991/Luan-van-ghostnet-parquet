@@ -1,21 +1,32 @@
 from __future__ import annotations
 
+import argparse
+import base64
 import json
 from pathlib import Path
 
-from build_kaggle_notebook import code_cell, project_archive
+try:
+    from .build_kaggle_notebook import code_cell, project_archive
+except ImportError:
+    from build_kaggle_notebook import code_cell, project_archive
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "kaggle_step8_notebook.ipynb"
 
 
-def build() -> dict:
+def build(presigned_config: Path | None = None) -> dict:
     archive = project_archive()
+    presigned_b64 = ""
+    if presigned_config is not None:
+        raw = presigned_config.read_bytes()
+        json.loads(raw.decode("utf-8"))
+        presigned_b64 = base64.b64encode(raw).decode("ascii")
     setup = f'''from pathlib import Path
 import base64
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -24,7 +35,17 @@ import zipfile
 PROJECT_DIR = Path("/kaggle/working/Luan-Van-GC-LSTM-GhostNet-CICDDoS2019-v1")
 OUTPUT_DIR = PROJECT_DIR / "outputs" / "step8" / "practical_split80"
 OUTER_TRAIN_FRACTION = 0.80
-RUN_NAME = "gc-lstm-ghostnet-practical-split80-full"
+PRESIGNED_CONFIG_B64 = "{presigned_b64}"
+PRESIGNED_CONFIG = None
+if PRESIGNED_CONFIG_B64:
+    presigned_path = Path("/kaggle/working/s3_presigned_config.json")
+    presigned_path.write_bytes(base64.b64decode(PRESIGNED_CONFIG_B64))
+    PRESIGNED_CONFIG = json.loads(presigned_path.read_text(encoding="utf-8"))
+    os.environ["S3_PRESIGNED_CONFIG_PATH"] = str(presigned_path)
+    os.environ["S3_BUCKET"] = PRESIGNED_CONFIG["bucket"]
+    os.environ["S3_PREFIX"] = PRESIGNED_CONFIG["s3_prefix"]
+    os.environ["AWS_DEFAULT_REGION"] = PRESIGNED_CONFIG["aws_region"]
+RUN_NAME = PRESIGNED_CONFIG["run_id"] if PRESIGNED_CONFIG else "gc-lstm-ghostnet-practical-split80-full"
 PROJECT_ARCHIVE_B64 = "{archive}"
 
 if PROJECT_DIR.exists():
@@ -63,7 +84,15 @@ print({{"device": "cpu", "outer_train_fraction": OUTER_TRAIN_FRACTION,
     "--run-name", RUN_NAME,
     "--session-budget-minutes", "300",
 ]
-if RESUME_PATH is not None:
+if PRESIGNED_CONFIG:
+    command.extend([
+        "--resume", "auto", "--upload-checkpoints-to-s3",
+        "--s3-bucket", PRESIGNED_CONFIG["bucket"],
+        "--s3-prefix", PRESIGNED_CONFIG["s3_prefix"],
+        "--aws-region", PRESIGNED_CONFIG["aws_region"],
+        "--s3-upload-required",
+    ])
+elif RESUME_PATH is not None:
     command.extend(["--resume", str(RESUME_PATH)])
 subprocess.run(command, cwd=PROJECT_DIR, check=True)
 '''
@@ -107,5 +136,9 @@ result
 
 
 if __name__ == "__main__":
-    OUTPUT.write_text(json.dumps(build(), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(OUTPUT)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--presigned-config", type=Path)
+    parser.add_argument("--output", type=Path, default=OUTPUT)
+    args = parser.parse_args()
+    args.output.write_text(json.dumps(build(args.presigned_config), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(args.output)

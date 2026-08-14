@@ -1,0 +1,11 @@
+{
+  "kaggle_kernel": "dungnguyen28101991/luan-van-ghostnet-parquet",
+  "dataset_source": "dungnguyen28101991/cicddos2019-parquet",
+  "target_epochs": 100,
+  "schedule_minutes": 30,
+  "recent_push_guard_minutes": 45,
+  "running_heartbeat_stale_hours": 6,
+  "maximum_session_attempts": 250,
+  "maximum_stagnant_restarts": 3,
+  "kaggle_session_timeout_seconds": 18000
+}

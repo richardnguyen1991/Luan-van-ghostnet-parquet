@@ -9,6 +9,7 @@ import random
 import shutil
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
@@ -86,7 +87,7 @@ def _loader(bundle, batch_size: int, shuffle: bool = False, seed: int = 0) -> Da
     )
 
 
-def _find_resume(value: str | None, output: Path) -> Path | None:
+def _find_resume(value: str | None, output: Path, uploader: S3ArtifactUploader) -> Path | None:
     if value is None:
         return None
     if value != "auto":
@@ -94,6 +95,9 @@ def _find_resume(value: str | None, output: Path) -> Path | None:
     local = output / "last_checkpoint.pt"
     if local.exists():
         return local
+    s3_resume = output / "s3_resume_last_checkpoint.pt"
+    if uploader.download("checkpoints/last_checkpoint.pt", s3_resume, required=False):
+        return s3_resume
     candidates = sorted(Path("/kaggle/input").rglob("last_checkpoint.pt"))
     return candidates[-1] if candidates else None
 
@@ -189,9 +193,20 @@ def main() -> None:
         "graph": _stable_hash(config["step3"]),
         "group_manifest": _stable_hash(manifest),
     }
-    resume = _find_resume(args.resume, output)
+    prefix = "/".join(part.strip("/") for part in (args.s3_prefix, "gc-lstm-ghostnet", run_id) if part)
+    uploader = S3ArtifactUploader(args.upload_checkpoints_to_s3, args.s3_bucket, prefix,
+                                  args.aws_region, args.s3_max_retries, args.s3_upload_required)
+    for artifact in (
+        output / "sample_manifest.json", output / "label_schema_audit.json",
+        output / "preprocessing.json", output / "preprocessor.joblib",
+    ):
+        uploader.upload(artifact, f"artifacts/{artifact.name}")
+
+    resume = _find_resume(args.resume, output, uploader)
+    if args.resume is not None and resume is None and uploader.resume_required:
+        raise FileNotFoundError("S3 active run requires resume, but its last checkpoint could not be downloaded")
     if args.resume is not None and resume is None:
-        raise FileNotFoundError("No local or attached last_checkpoint.pt was found")
+        print("No resumable checkpoint exists; starting the new exhaustive-label run at epoch 1")
     if resume is not None:
         checkpoint = torch.load(resume, map_location="cpu", weights_only=False)
         checkpoint_mapping = checkpoint.get("preprocessing_metadata", {}).get("label_mapping")
@@ -210,13 +225,29 @@ def main() -> None:
         generated = checkpoint["generated_train_sequences"]; consumed = checkpoint["consumed_train_sequences"]
         resume_online = checkpoint.get("epoch_online", resume_online)
 
-    prefix = "/".join(part.strip("/") for part in (args.s3_prefix, "gc-lstm-ghostnet", run_id) if part)
-    uploader = S3ArtifactUploader(args.upload_checkpoints_to_s3, args.s3_bucket, prefix,
-                                  args.aws_region, args.s3_max_retries, args.s3_upload_required)
     session_deadline = time.monotonic() + max(1, args.session_budget_minutes - 20) * 60
     training_started = time.perf_counter()
     peak_memory_mb = 0.0
     process = psutil.Process(os.getpid())
+
+    def update_active(status: str, completed_epoch: int) -> None:
+        active = output / "active_run.json"
+        write_json(active, {
+            "run_id": run_id,
+            "status": status,
+            "completed_epoch": completed_epoch,
+            "active_epoch": epoch,
+            "progress_cursor": cursor,
+            "generated_train_sequences": generated,
+            "consumed_train_sequences": consumed,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "contract_version": "exhaustive-label-v1",
+            "device": "cpu",
+        })
+        active_key = "/".join(part.strip("/") for part in (args.s3_prefix, "active_run.json") if part)
+        uploader.upload_key(active, active_key)
+
+    update_active("running", max(0, epoch - 1))
 
     def save_checkpoint(complete_epoch: bool) -> Path:
         checkpoint_epoch = epoch if complete_epoch else epoch - 1
@@ -244,6 +275,7 @@ def main() -> None:
         uploader.upload(path, f"checkpoints/{path.name}")
         uploader.upload(output / "last_checkpoint.pt", "checkpoints/last_checkpoint.pt")
         uploader.upload(output / "checkpoint_metadata.json", "checkpoints/checkpoint_metadata.json")
+        update_active("running" if complete_epoch else "paused", checkpoint_epoch)
         return path
 
     while epoch <= args.epochs:
@@ -290,6 +322,7 @@ def main() -> None:
                     "generated_train_sequences": generated, "consumed_train_sequences": consumed,
                     "counts_equal_at_safe_stop": generated == consumed, "device": "cpu",
                 })
+                uploader.upload(output / "step8_session_summary.json", "status/step8_session_summary.json")
                 print(json.dumps(json.loads((output / "step8_session_summary.json").read_text()), indent=2)); return
         flush()
         if generated != consumed:
@@ -306,7 +339,9 @@ def main() -> None:
         })
         improved = val_result.macro_f1 > best_f1; best_f1 = max(best_f1, val_result.macro_f1)
         scheduler.step(); save_checkpoint(True)
-        if improved: shutil.copy2(output / "last_checkpoint.pt", output / "best_model.pt")
+        if improved:
+            shutil.copy2(output / "last_checkpoint.pt", output / "best_model.pt")
+            uploader.upload(output / "best_model.pt", "checkpoints/best_model.pt")
         epoch += 1; cursor = 0
 
     final = output / "final_model_epoch_100.pt"; shutil.copy2(output / "last_checkpoint.pt", final)
@@ -326,6 +361,7 @@ def main() -> None:
     write_json(output / "run_config.json", run_config)
     for artifact in [*artifacts, final, output / "run_config.json"]:
         uploader.upload(artifact, f"artifacts/{artifact.name}")
+    update_active("completed", args.epochs)
     print(json.dumps({"status": "passed", **run_config, "test_metrics": _metric_payload(test)}, indent=2))
 
 
