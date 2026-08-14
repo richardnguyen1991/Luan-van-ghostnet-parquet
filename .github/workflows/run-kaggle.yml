@@ -3,6 +3,14 @@ name: Run Kaggle CPU notebook
 on:
   workflow_dispatch:
     inputs:
+      run_mode:
+        description: Notebook contract to run
+        required: true
+        default: step8_full_split80
+        type: choice
+        options:
+          - step8_full_split80
+          - step7_sampled
       max_sessions:
         description: Maximum Kaggle attempts (1-3); use more than 1 only for an explicit retry
         required: true
@@ -44,7 +52,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sampled-end-to-end:
+  kaggle-cpu:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
@@ -54,8 +62,18 @@ jobs:
       - name: Check out requested revision
         uses: actions/checkout@v4
 
-      - name: Rebuild checked-in Kaggle notebook payload
-        run: python scripts/build_kaggle_notebook.py
+      - name: Build selected Kaggle notebook payload
+        shell: bash
+        env:
+          RUN_MODE: ${{ inputs.run_mode }}
+        run: |
+          set -euo pipefail
+          if [[ "$RUN_MODE" == "step8_full_split80" ]]; then
+            python scripts/build_step8_notebook.py
+            cp kaggle_step8_notebook.ipynb kaggle_notebook.ipynb
+          else
+            python scripts/build_kaggle_notebook.py
+          fi
 
       - name: Validate non-secret CPU configuration
         shell: bash
@@ -74,6 +92,9 @@ jobs:
           assert metadata["enable_gpu"] is False
           assert metadata["dataset_sources"] == ["dungnguyen28101991/cicddos2019-parquet"]
           assert Path(metadata["code_file"]).is_file()
+          notebook = json.loads(Path(metadata["code_file"]).read_text(encoding="utf-8"))
+          source = "".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+          assert '"cpu"' in source
           PY
 
       - name: Install Kaggle CLI
@@ -134,7 +155,7 @@ jobs:
         if: steps.kaggle.outputs.completed == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: kaggle-step7-${{ github.run_id }}
+          name: kaggle-${{ inputs.run_mode }}-${{ github.run_id }}
           path: kaggle-output/
           if-no-files-found: error
           retention-days: 14
@@ -167,6 +188,5 @@ jobs:
           S3_PREFIX: ${{ secrets.S3_PREFIX }}
         run: >-
           aws s3 sync kaggle-output
-          "s3://${S3_BUCKET}/${S3_PREFIX}/step7/${GITHUB_RUN_ID}/"
+          "s3://${S3_BUCKET}/${S3_PREFIX}/${{ inputs.run_mode }}/${GITHUB_RUN_ID}/"
           --only-show-errors
-

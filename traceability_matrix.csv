@@ -25,3 +25,11 @@ requirement_id,requirement,implementation,test_or_evidence,status
 93,Integrated Gradients feature importance,src/explainability.py,feature_importance.csv,implemented_step_6
 97,Centralize headless plotting in viz.py,src/viz.py,report_status.json,implemented_step_6
 98,Regenerate report from artifacts without training,src/make_report.py,report_status.json,implemented_step_6
+31,Full mode reads groups lazily without concatenating all files,src/streaming.py;src/step8_full_train.py,tests/test_streaming.py,implemented_step_8
+32,Global deterministic all-train-group schedule and bounded mixed buffer,src/streaming.py;src/step8_full_train.py,tests/test_streaming.py,implemented_step_8
+33,Whole-group reservoirs scan complete group manifest,src/streaming.py,tests/test_streaming.py,implemented_step_8
+34,Generated and consumed full-train sequence counts must match,src/step8_full_train.py,step8_session_summary.json;run_config.json,implemented_step_8
+71,Controlled CPU session stop with progress cursor and emergency checkpoint,src/step8_full_train.py,checkpoint_metadata.json;last_checkpoint.pt,implemented_step_8
+113,Full 100 target epochs for separate approved split runs,kaggle_step8_notebook.ipynb;src/step8_full_train.py,final_model_epoch_100.pt,in_progress_step_8_split80_first
+117,No model-per-file and no dropped eligible train sequences,src/step8_full_train.py,run_config.json counts_equal,implemented_step_8
+120,Separate run IDs for outer train 70 and 80,README.md;src/step8_full_train.py,separate run_config.json artifacts,in_progress_step_8

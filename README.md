@@ -187,6 +187,45 @@ source. The same outputs are retained as a GitHub Actions artifact for 14 days.
 This is still a bounded sampled acceptance run, not the 100-epoch full-dataset
 experiment. Step 8 must not be started until it is explicitly approved.
 
+## Step 8: approved full streaming run
+
+Step 8 was explicitly approved on 2026-08-14. The first eligible experiment is
+`practical_baseline` with outer train 80%; the 70% run follows as a separate
+`run_id`. `paper_faithful` is not launched because CFACO/GAIN/ResNet ablations
+have not yet passed acceptance and must not be mislabeled as reproduced.
+
+The dedicated `kaggle_step8_notebook.ipynb` runs CPU-only with exactly 100 target
+epochs. It builds every contiguous group from all 18 Parquet files, assigns each
+whole group to one split, creates a deterministic global train schedule per
+epoch, and trains through a bounded mixed sequence buffer. A safe session stop
+flushes the buffer and requires `generated_train_sequences ==
+consumed_train_sequences` before writing `last_checkpoint.pt`.
+
+Full command:
+
+```bash
+python train.py \
+  --data-dir /kaggle/input \
+  --output-dir /kaggle/working/gc-lstm-step8-split80 \
+  --config configs/base.yaml \
+  --mode-config configs/practical_baseline.yaml \
+  --epochs 100 --batch-size 512 --learning-rate 0.001 --device cpu \
+  --full-dataset --stream-files \
+  --sequence-group-rows 4096 \
+  --stream-shuffle-buffer-sequences 8192 \
+  --stream-eval-samples-per-file 512 \
+  --train-eval-samples-per-class 256 \
+  --outer-train-fraction 0.80 \
+  --run-name gc-lstm-ghostnet-practical-split80-full \
+  --session-budget-minutes 300
+```
+
+To resume, attach the private checkpoint dataset containing `last_checkpoint.pt`
+and add `--resume auto`. Do not add `--samples-per-file`; the Step 8 CLI rejects
+that cap. The preprocessing fit uses a bounded whole-group reservoir selected
+only from train groups after scanning all files; this is recorded as an
+operational proxy, not paper-exact preprocessing.
+
 Run tests:
 
 ```bash
@@ -201,4 +240,3 @@ without first materializing the full dataset in memory. The current Step 4
 implementation is explicitly labeled `bounded_contiguous_sample`; it refuses
 `--full-dataset`/`--stream-files` so a sampled result cannot be mislabeled as a
 full-dataset experiment.
-
