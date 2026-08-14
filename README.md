@@ -224,7 +224,12 @@ To resume, attach the private checkpoint dataset containing `last_checkpoint.pt`
 and add `--resume auto`. Do not add `--samples-per-file`; the Step 8 CLI rejects
 that cap. The preprocessing fit uses a bounded whole-group reservoir selected
 only from train groups after scanning all files; this is recorded as an
-operational proxy, not paper-exact preprocessing.
+operational proxy, not paper-exact preprocessing. Before fitting that proxy, the
+pipeline scans the label column of every manifest group and fixes one exhaustive,
+stable class mapping for the model, reservoirs, and all streaming groups. The
+audit is written to `label_schema_audit.json`; feature imputation and scaling
+remain train-only. Checkpoints created before this exhaustive mapping contract
+are intentionally incompatible and must not be resumed.
 
 Run tests:
 

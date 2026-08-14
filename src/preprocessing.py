@@ -297,7 +297,12 @@ class LeakageSafePreprocessor:
             device="cpu",
         )
 
-    def fit_transform_splits(self, frame: pd.DataFrame, label_column: str) -> PreprocessedSplits:
+    def fit_transform_splits(
+        self,
+        frame: pd.DataFrame,
+        label_column: str,
+        label_vocabulary: Sequence[str] | None = None,
+    ) -> PreprocessedSplits:
         if "split" not in frame:
             raise ValueError("Split assignments must exist before preprocessing")
         subsets = {split: frame.loc[frame["split"] == split].copy() for split in ("train", "validation", "test")}
@@ -340,7 +345,22 @@ class LeakageSafePreprocessor:
         else:
             self.clip_counts = {"train": 0, "validation": 0, "test": 0}
 
-        all_labels = sorted(frame[label_column].astype("string").dropna().unique().tolist())
+        observed_labels = sorted(
+            frame[label_column].astype("string").dropna().unique().tolist()
+        )
+        if label_vocabulary is None:
+            all_labels = observed_labels
+            label_mapping_source = "fit_frame"
+        else:
+            all_labels = sorted({str(label) for label in label_vocabulary})
+            if not all_labels:
+                raise ValueError("Provided label vocabulary must not be empty")
+            unexpected = sorted(set(observed_labels) - set(all_labels))
+            if unexpected:
+                raise ValueError(
+                    f"Fit frame contains labels absent from provided vocabulary: {unexpected}"
+                )
+            label_mapping_source = "provided_exhaustive_vocabulary"
         self.label_mapping = {label: index for index, label in enumerate(all_labels)}
         encode = lambda series: series.astype("string").map(self.label_mapping).to_numpy(dtype=np.int64)
         train_y_all = encode(subsets["train"][label_column])
@@ -365,6 +385,10 @@ class LeakageSafePreprocessor:
             "test_rows_unchanged": len(test_imputed),
             "clip_counts": self.clip_counts,
             "label_mapping": self.label_mapping,
+            "label_mapping_source": label_mapping_source,
+            "labels_not_observed_in_fit_proxy": sorted(
+                set(all_labels) - set(observed_labels)
+            ),
             "labels_missing_from_train": sorted(set(all_labels) - set(subsets["train"][label_column].astype("string"))),
             "labels_missing_from_validation": sorted(set(all_labels) - set(subsets["validation"][label_column].astype("string"))),
             "labels_missing_from_test": sorted(set(all_labels) - set(subsets["test"][label_column].astype("string"))),

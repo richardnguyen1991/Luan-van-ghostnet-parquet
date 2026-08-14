@@ -4,13 +4,16 @@ import pandas as pd
 
 from src.data import DatasetPaths
 from src.streaming import (
+    audit_group_label_schema,
     assign_stream_split,
     build_group_manifest,
     epoch_schedule,
     manifest_summary,
     reservoir_groups,
     concatenate_bundles,
+    fit_streaming_proxy,
 )
+from src.config import load_config
 from src.graph_sequences import AlignedSplit, build_sequence_graph_tensors
 import numpy as np
 
@@ -90,3 +93,31 @@ def test_bundle_concatenation_preserves_window_pointers() -> None:
     assert len(merged.edge_window_ptr) == 5
     assert len(merged.node_window_ptr) == 5
     assert int(merged.edge_window_ptr[-1]) == merged.edge_index.shape[1]
+
+
+def test_exhaustive_label_audit_defines_mapping_beyond_fit_reservoir(tmp_path: Path) -> None:
+    paths = fixture_paths(tmp_path)
+    rare_path = paths.parquet_files[-1]
+    rare = pd.read_parquet(rare_path)
+    rare.loc[rare.index[-12:], "Label"] = "RARE"
+    rare.to_parquet(rare_path, row_group_size=24, index=False)
+
+    groups = build_group_manifest(paths, group_rows=12, outer_train_fraction=0.8, seed=42)
+    audit = audit_group_label_schema(paths, groups, "Label")
+    assert audit["label_vocabulary"] == ["A", "B", "RARE"]
+    assert audit["rows_scanned"] == 288
+
+    retained = reservoir_groups(paths, groups, groups_per_file_and_split=1, seed=8)
+    for split in retained:
+        for frame in retained[split]:
+            frame.loc[frame["Label"].eq("RARE"), "Label"] = "A"
+    config = load_config("configs/base.yaml", "configs/practical_baseline.yaml")
+    processor, metadata = fit_streaming_proxy(
+        retained,
+        "Label",
+        config,
+        seed=42,
+        label_vocabulary=audit["label_vocabulary"],
+    )
+    assert processor.label_mapping == {"A": 0, "B": 1, "RARE": 2}
+    assert metadata["labels_not_observed_in_fit_proxy"] == ["RARE"]

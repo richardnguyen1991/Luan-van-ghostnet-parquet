@@ -22,6 +22,7 @@ from .config import config_hash, load_config
 from .data import discover_dataset, validate_dataset_manifests, write_json
 from .model import GCLSTMGhostNet, model_parameter_count
 from .streaming import (
+    audit_group_label_schema,
     build_group_manifest,
     concatenate_bundles,
     epoch_schedule,
@@ -128,13 +129,26 @@ def main() -> None:
     })
     write_json(output / "sample_manifest.json", manifest)
 
+    label_audit = audit_group_label_schema(paths, groups, label_column)
+    write_json(output / "label_schema_audit.json", label_audit)
+
     # Full scan with bounded whole-group reservoir retention. Only retained train
     # groups are used to fit preprocessing; validation/test are transform-only.
     per_file_groups = max(1, math.ceil(args.stream_eval_samples_per_file / args.sequence_group_rows))
     reservoirs = reservoir_groups(paths, groups, per_file_groups, args.seed)
     processor, preprocessing_metadata = fit_streaming_proxy(
-        reservoirs, label_column, config, args.seed
+        reservoirs,
+        label_column,
+        config,
+        args.seed,
+        label_vocabulary=label_audit["label_vocabulary"],
     )
+    preprocessing_metadata.update({
+        "label_mapping_scope": label_audit["scope"],
+        "label_schema_audit_hash": _stable_hash(label_audit),
+        "label_counts_by_split": label_audit["label_counts_by_split"],
+        "labels_missing_from_split": label_audit["labels_missing_from_split"],
+    })
     processor.save(output, preprocessing_metadata)
     joblib.dump(processor, output / "preprocessor.joblib")
     eval_bundles = {}
@@ -180,6 +194,12 @@ def main() -> None:
         raise FileNotFoundError("No local or attached last_checkpoint.pt was found")
     if resume is not None:
         checkpoint = torch.load(resume, map_location="cpu", weights_only=False)
+        checkpoint_mapping = checkpoint.get("preprocessing_metadata", {}).get("label_mapping")
+        if checkpoint_mapping != preprocessing_metadata["label_mapping"]:
+            raise ValueError(
+                "Resume checkpoint label mapping is incompatible with the exhaustive "
+                "dataset label audit; start a new run from epoch 1"
+            )
         if checkpoint["contract_hashes"] != contract_hashes or checkpoint["run_id"] != run_id:
             raise ValueError("Resume checkpoint contract/run mismatch")
         model.load_state_dict(checkpoint["model"]); optimizer.load_state_dict(checkpoint["optimizer"])

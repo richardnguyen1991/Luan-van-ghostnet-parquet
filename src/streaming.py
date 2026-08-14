@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -10,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-from .data import DatasetPaths, canonicalize_frame, stable_sample_ids
+from .data import DatasetPaths, canonicalize_columns, canonicalize_frame, stable_sample_ids
 from .graph_sequences import AlignedSplit, SequenceGraphTensors, build_sequence_graph_tensors
 from .preprocessing import LeakageSafePreprocessor
 
@@ -143,18 +144,96 @@ def manifest_summary(groups: list[GroupRef]) -> dict:
     }
 
 
+def audit_group_label_schema(
+    paths: DatasetPaths,
+    groups: list[GroupRef],
+    label_column: str,
+) -> dict:
+    """Scan only the label column for every group in the split manifest.
+
+    Feature preprocessing remains train-only.  The exhaustive label vocabulary is
+    schema metadata, and must be known before the classifier output dimension and
+    stable class indices are created.
+    """
+    grouped: dict[tuple[int, int], list[GroupRef]] = {}
+    for group in groups:
+        grouped.setdefault((group.file_index, group.row_group), []).append(group)
+
+    counts = {split: Counter() for split in ("train", "validation", "test")}
+    null_counts = {split: 0 for split in counts}
+    rows_scanned = 0
+    parquet_cache: dict[int, tuple[pq.ParquetFile, str]] = {}
+    for (file_index, row_group), references in sorted(grouped.items()):
+        if file_index not in parquet_cache:
+            parquet = pq.ParquetFile(paths.parquet_files[file_index])
+            physical_columns = list(parquet.schema_arrow.names)
+            canonical_columns = canonicalize_columns(physical_columns)
+            matches = [
+                physical for physical, canonical in zip(physical_columns, canonical_columns)
+                if canonical == label_column
+            ]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"Expected one physical label column for {label_column!r}, found {matches}"
+                )
+            parquet_cache[file_index] = (parquet, matches[0])
+        parquet, physical_label = parquet_cache[file_index]
+        labels = (
+            parquet.read_row_group(row_group, columns=[physical_label])
+            .column(0)
+            .to_pandas()
+            .astype("string")
+        )
+        for group in references:
+            chunk = labels.iloc[group.offset:group.offset + group.rows]
+            if len(chunk) != group.rows:
+                raise RuntimeError(f"Label audit slice is incomplete for {group.group_id}")
+            null_counts[group.split] += int(chunk.isna().sum())
+            counts[group.split].update(str(value) for value in chunk.dropna().tolist())
+            rows_scanned += len(chunk)
+
+    if any(null_counts.values()):
+        raise RuntimeError(f"Null labels found during exhaustive label audit: {null_counts}")
+    vocabulary = sorted(set().union(*(set(counter) for counter in counts.values())))
+    if not vocabulary:
+        raise RuntimeError("Exhaustive label audit found no labels")
+    expected_rows = sum(group.rows for group in groups)
+    if rows_scanned != expected_rows:
+        raise RuntimeError(
+            f"Label audit row mismatch: scanned={rows_scanned}, expected={expected_rows}"
+        )
+    return {
+        "scope": "all_manifest_groups_label_column_only",
+        "label_column": label_column,
+        "label_vocabulary": vocabulary,
+        "label_mapping": {label: index for index, label in enumerate(vocabulary)},
+        "label_counts_by_split": {
+            split: dict(sorted(counter.items())) for split, counter in counts.items()
+        },
+        "labels_missing_from_split": {
+            split: sorted(set(vocabulary) - set(counter)) for split, counter in counts.items()
+        },
+        "null_label_rows_by_split": null_counts,
+        "rows_scanned": rows_scanned,
+        "source_file_count": len(paths.parquet_files),
+    }
+
+
 def fit_streaming_proxy(
     reservoirs: dict[str, list[pd.DataFrame]],
     label_column: str,
     config: dict,
     seed: int,
+    label_vocabulary: list[str] | None = None,
 ) -> tuple[LeakageSafePreprocessor, dict]:
     frame = pd.concat(
         [item for split in ("train", "validation", "test") for item in reservoirs[split]],
         ignore_index=True,
     )
     processor = LeakageSafePreprocessor(config, seed)
-    processed = processor.fit_transform_splits(frame, label_column)
+    processed = processor.fit_transform_splits(
+        frame, label_column, label_vocabulary=label_vocabulary
+    )
     metadata = dict(processed.metadata)
     metadata.update({
         "streaming_fit_policy": "bounded_whole_group_reservoir_scanned_across_all_files",
@@ -186,7 +265,13 @@ def transform_group(
         np.clip(scaled, float(low), float(high), out=scaled)
     labels = rows[label_column].astype("string").map(processor.label_mapping)
     if labels.isna().any():
-        raise RuntimeError("Streaming group contains a label absent from fitted mapping")
+        unknown = sorted(
+            rows.loc[labels.isna(), label_column].astype("string").dropna().unique().tolist()
+        )
+        raise RuntimeError(
+            "Streaming group contains labels absent from exhaustive mapping: "
+            f"{unknown[:20]}"
+        )
     aligned = AlignedSplit(rows, scaled, labels.to_numpy(dtype=np.int64))
     try:
         return build_sequence_graph_tensors(aligned, split, config)
