@@ -1,0 +1,35 @@
+requirement_id,requirement,implementation,test_or_evidence,status
+23,Recursive Parquet discovery and schema profile,src/data.py,tests/test_data.py,implemented_step_2
+24,Ordered label-column detection with ambiguity failure,src/data.py,tests/test_data.py,implemented_step_2
+25,Identify timestamp IDs IP ports protocol and leakage columns,src/data.py,tests/test_data.py,implemented_step_2
+26,Compare actual schema with paper claim,src/data.py,data_profile.json runtime artifact,implemented_step_2
+27,Outer train fractions 0.70 and 0.80 with internal validation,src/splits.py,tests/test_splits.py,implemented_step_2
+28,Prefer group integrity over stratification,src/splits.py,tests/test_splits.py,implemented_step_2
+29,Stable sample_id and empty split intersections,src/data.py;src/splits.py,tests/test_splits.py,implemented_step_2
+35,Duplicate empty numeric and infinity handling,src/preprocessing.py,tests/test_preprocessing.py,implemented_step_2
+36,GAIN fit on train and skipped when no missing,src/preprocessing.py,tests/test_preprocessing.py,implemented_step_2
+37,Isolation Forest train-only outlier removal,src/preprocessing.py,tests/test_preprocessing.py,implemented_step_2
+38,MinMax fit train-only and clip accounting,src/preprocessing.py,tests/test_preprocessing.py,implemented_step_2
+48,Do not fabricate graph without valid identity/time,configs/*.yaml,paper_alignment.md,implemented_step_3
+49,Contiguous Parquet slices for temporal validation,src/data.py,tests/test_graph_sequences.py,implemented_step_3
+50,Create windows only inside source-row-contiguous split groups,src/graph_sequences.py,tests/test_graph_sequences.py,implemented_step_3
+51,Build directed endpoint graph without persisting raw IPs,src/graph_sequences.py,tests/test_graph_sequences.py,implemented_step_3
+52,Verify zero sample/group intersections across tensor splits,src/graph_sequences.py,tests/test_graph_sequences.py,implemented_step_3
+53,Write compressed sequence and graph tensor artifacts,src/step3_smoke.py,tests/test_graph_sequences.py,implemented_step_3
+68,Immutable epoch latest and best checkpoints,src/training.py,step5_resume_summary.json,implemented_step_5
+69,Atomic S3 upload with size and SHA-256 verification,src/training.py,S3 object metadata,implemented_step_5
+70,Resume next epoch with hash and RNG validation,src/training.py;src/step5_resume_smoke.py,tests/test_resume_contract.py;step5_resume_summary.json,implemented_step_5
+118,Interrupt after epoch 2 and resume epoch 3 with state comparison,src/step5_resume_smoke.py,step5_resume_summary.json,implemented_step_5
+51,Learn spatial attention and expose temporal attention,src/model.py,tests/test_model.py;spatial_attention.csv;temporal_attention.csv,implemented_step_6
+81,CPU warmup and repeated latency benchmark,src/benchmark.py,benchmark.json;benchmark_raw.csv,implemented_step_6
+93,Integrated Gradients feature importance,src/explainability.py,feature_importance.csv,implemented_step_6
+97,Centralize headless plotting in viz.py,src/viz.py,report_status.json,implemented_step_6
+98,Regenerate report from artifacts without training,src/make_report.py,report_status.json,implemented_step_6
+31,Full mode reads groups lazily without concatenating all files,src/streaming.py;src/step8_full_train.py,tests/test_streaming.py,implemented_step_8
+32,Global deterministic all-train-group schedule and bounded mixed buffer,src/streaming.py;src/step8_full_train.py,tests/test_streaming.py,implemented_step_8
+33,Whole-group reservoirs scan complete group manifest,src/streaming.py,tests/test_streaming.py,implemented_step_8
+34,Generated and consumed full-train sequence counts must match,src/step8_full_train.py,step8_session_summary.json;run_config.json,implemented_step_8
+71,Controlled CPU session stop with progress cursor and emergency checkpoint,src/step8_full_train.py,checkpoint_metadata.json;last_checkpoint.pt,implemented_step_8
+113,Full 100 target epochs for separate approved split runs,kaggle_step8_notebook.ipynb;src/step8_full_train.py,final_model_epoch_100.pt,in_progress_step_8_split80_first
+117,No model-per-file and no dropped eligible train sequences,src/step8_full_train.py,run_config.json counts_equal,implemented_step_8
+120,Separate run IDs for outer train 70 and 80,README.md;src/step8_full_train.py,separate run_config.json artifacts,in_progress_step_8

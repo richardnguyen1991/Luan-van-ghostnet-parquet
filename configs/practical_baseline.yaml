@@ -1,0 +1,21 @@
+project:
+  mode: practical_baseline
+
+preprocessing:
+  missing_strategy: median
+
+feature_extraction:
+  sax_enabled: false
+  resnet50_enabled: false
+
+feature_selection:
+  cfaco_enabled: false
+
+graph:
+  enabled: true
+  status: directed_endpoint_graph_validated_in_step_3
+
+training:
+  enabled: true
+  status: step_4_sampled_training
+

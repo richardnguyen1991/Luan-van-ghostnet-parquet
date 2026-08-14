@@ -1,0 +1,96 @@
+project:
+  name: Luan-Van-GC-LSTM-GhostNet-CICDDoS2019-v1
+  seed: 42
+  mode: base
+
+data:
+  kaggle_dataset: dungnguyen28101991/cicddos2019-parquet
+  dataset_dir_hint: cicddos2019_parquet_preserved
+  manifest_subdir: manifests
+  parquet_subdir: data
+  label_candidates: [Label, label, Class, class, target, Target]
+  timestamp_candidates: [Timestamp, timestamp]
+  provenance_columns: [__capture_day, __source_file_id, __source_row_id]
+  identifier_columns: ["Unnamed: 0", Flow ID, Source IP, Destination IP, Timestamp]
+  non_numeric_feature_columns: [SimillarHTTP]
+  samples_per_file: 2048
+  sequence_group_rows: 4096
+  timestamp_parse_sample_rows: 50000
+  expected_source_files: 18
+  expected_original_columns: 88
+  expected_output_columns: 91
+  expected_schema_hash: 1351338165f122952644b65e64aec658ed6457320b7dd46bf9a2e8216b6c97a2
+
+splits:
+  outer_train_fractions: [0.70, 0.80]
+  validation_fraction_of_outer_train: 0.10
+  candidate_attempts: 128
+  stratify_at_group_level: true
+  group_rule: source_file_and_contiguous_row_block
+
+preprocessing:
+  convert_infinity_to_missing: true
+  drop_duplicate_columns: true
+  drop_empty_columns: true
+  drop_constant_columns: true
+  isolation_forest:
+    enabled: true
+    contamination: 0.01
+    n_estimators: 100
+    remove_from_train_only: true
+  minmax:
+    feature_range: [0.0, 1.0]
+    clip: false
+  gain:
+    epochs: 20
+    batch_size: 256
+    hint_rate: 0.90
+    alpha: 100.0
+    learning_rate: 0.001
+    hidden_multiplier: 1.0
+
+step3:
+  sequence_length: 16
+  sequence_stride: 8
+  require_consecutive_source_rows: true
+  target_rule: last_timestep
+  source_endpoint_column: Source IP
+  destination_endpoint_column: Destination IP
+  endpoint_hash_namespace: gc-lstm-ghostnet-cicddos2019-v1
+  missing_endpoint_policy: drop_window
+  graph_direction: directed
+  sampled_row_groups_per_file: 4
+
+step4:
+  outer_train_fraction: 0.80
+  flow_embedding_dim: 64
+  graph_hidden_dim: 64
+  graph_layers: 3
+  lstm_hidden_dim: 96
+  lstm_layers: 1
+  ghost_primary_channels: 64
+  ghost_ratio: 2
+  dropout: 0.20
+  bidirectional_lstm: false
+  class_weighting: none
+  checkpoint_metric: macro_f1
+  sampled_smoke_epochs: 2
+  sampled_smoke_batch_size: 64
+  stream_shuffle_buffer_sequences: 8192
+  stream_eval_samples_per_file: 512
+  train_eval_samples_per_class: 256
+
+future_training_contract:
+  device: cpu
+  epochs: 100
+  batch_size: 512
+  optimizer: AdamW
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  gradient_clip_norm: 1.0
+  scheduler: cosine
+  min_learning_rate: 0.000001
+  mixed_precision_on_cuda: false
+  deterministic_algorithms: true
+  checkpoint_after_scheduler_step: true
+  test_only_after_target_epoch: true
